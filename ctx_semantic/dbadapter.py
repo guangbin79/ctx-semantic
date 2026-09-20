@@ -157,7 +157,7 @@ def list_chunks(
     chunks content_type column exactly. Both optional.
     """
     sql, params = _select_chunks(source_filter, content_type)
-    return _with_retry(lambda: con.execute(sql, params).fetchall())  # type: ignore[arg-type,return-value]
+    return _with_retry(lambda: con.execute(sql, params).fetchall())
 
 
 def snapshot_chunks(
@@ -180,7 +180,7 @@ def snapshot_chunks(
         finally:
             con.execute("COMMIT")  # read txn; commit just releases the snapshot
 
-    return _with_retry(run)  # type: ignore[arg-type,return-value]
+    return _with_retry(run)
 
 
 def _escape_fts(query: str) -> str | None:
@@ -208,7 +208,7 @@ def bm25_search(
             " WHERE chunks MATCH ? ORDER BY rank LIMIT ?",
             (match_expr, limit),
         ).fetchall()
-    )  # type: ignore[arg-type,return-value]
+    )
 
 
 def get_many(
@@ -231,5 +231,5 @@ def get_many(
             f" WHERE c.rowid IN ({placeholders})",
             ids,
         ).fetchall()
-    )  # type: ignore[arg-type,return-value]
+    )
     return {r[0]: (r[1], r[2], r[3], r[4], r[5]) for r in rows}
