@@ -26,3 +26,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ctx_semantic"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: touches real on-disk context-mode DBs (read-only opens)",
+]
