@@ -50,8 +50,33 @@ logger = logging.getLogger(__name__)
 MODEL_NAME: Final = "jinaai/jina-embeddings-v2-base-zh"
 DIM: Final = 768  # task-1-scaffold.md; re-asserted from live output at load
 DEFAULT_CACHE_DIR: Final = Path("/home/guangbin/ctx-semantic/models")
+# fastembed default batch 256 needs a ~3 GiB fused-MatMul workspace -> OOM
+# on a 6 GB card; 32 fits. Knob for embed(), see embed_batch.
+EMBED_BATCH_SIZE: Final = 32
 
 _cuda_libs_preloaded = False
+
+
+def _apply_hf_env() -> None:
+    """Pin task-1's verified hub combo before fastembed touches the network.
+
+    The model ships from the local cache; when fastembed still resolves hub
+    metadata remotely, only HF_ENDPOINT=hf-mirror + xet off + proxies off was
+    verified working on this host (direct hf-mirror ~2 MB/s; proxied
+    huggingface.co ~110 KB/s; xet 401s against the mirror). Idempotent —
+    explicit HF_HUB_DISABLE_XET/HF_ENDPOINT values win via setdefault, proxy
+    vars are dropped because the working combo is direct.
+    """
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    for var in (
+        "all_proxy", "ALL_PROXY", "http_proxy", "https_proxy",
+        "HTTP_PROXY", "HTTPS_PROXY",
+    ):
+        os.environ.pop(var, None)
+
+
+_apply_hf_env()
 
 
 def _preload_cuda_libs() -> None:
@@ -202,13 +227,18 @@ class Embedder:
         self._ensure_loaded()
         if not texts:
             return np.empty((0, DIM), dtype=np.float32)
+        # ponytail: small in-process batches (EMBED_BATCH_SIZE) — the default
+        # 256 needs a ~3 GiB fused-MatMul workspace that OOMs a 6 GB card;
+        # parallel must stay None (0 means all-cores -> per-core worker
+        # processes each opening a CUDA session = guaranteed OOM).
+        kwargs = {"batch_size": EMBED_BATCH_SIZE}
         try:
-            mat = np.stack(list(self._model.embed(texts)))
+            mat = np.stack(list(self._model.embed(texts, **kwargs)))
         except Exception as exc:
             if self._device != "cuda":
                 raise
             self._rebuild_on_cpu(exc)
-            mat = np.stack(list(self._model.embed(texts)))
+            mat = np.stack(list(self._model.embed(texts, **kwargs)))
         return _l2_normalized(mat)
 
     def embed_query(self, text: str) -> npt.NDArray[np.float32]:

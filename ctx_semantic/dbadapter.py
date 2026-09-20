@@ -127,6 +127,20 @@ def _assert_schema(con: sqlite3.Connection) -> None:
             )
 
 
+def _append_filters(
+    sql: str, params: list[str], source_filter: str | None, content_type: str | None
+) -> tuple[str, list[str]]:
+    """Extend a ``FROM chunks AS c`` query with the shared filter clauses."""
+    if source_filter is not None:
+        sql += " JOIN sources AS s ON s.id = c.source_id WHERE s.label = ?"
+        params.append(source_filter)
+    if content_type is not None:
+        sql += " WHERE " if "WHERE" not in sql else " AND "
+        sql += "c.content_type = ?"
+        params.append(content_type)
+    return sql, params
+
+
 def _select_chunks(
     source_filter: str | None, content_type: str | None
 ) -> tuple[str, list[str]]:
@@ -135,13 +149,7 @@ def _select_chunks(
         " c.timestamp FROM chunks AS c"
     )
     params: list[str] = []
-    if source_filter is not None:
-        sql += " JOIN sources AS s ON s.id = c.source_id WHERE s.label = ?"
-        params.append(source_filter)
-    if content_type is not None:
-        sql += " WHERE " if "WHERE" not in sql else " AND "
-        sql += "c.content_type = ?"
-        params.append(content_type)
+    sql, params = _append_filters(sql, params, source_filter, content_type)
     sql += " ORDER BY c.rowid"
     return sql, params
 
@@ -196,18 +204,34 @@ def _escape_fts(query: str) -> str | None:
 
 
 def bm25_search(
-    con: sqlite3.Connection, query: str, limit: int
+    con: sqlite3.Connection,
+    query: str,
+    limit: int,
+    source_filter: str | None = None,
+    content_type: str | None = None,
 ) -> list[tuple[int, float]]:
-    """Full-text search returning (rowid, bm25 score) — lower score is better."""
+    """Full-text search returning (rowid, bm25 score) — lower score is better.
+
+    source_filter (exact sources.label) and content_type (exact) restrict
+    matches WHERE-side, so the BM25 leg of hybrid search honors them natively.
+    """
     match_expr = _escape_fts(query)
     if match_expr is None:
         return []
+    sql = (
+        "SELECT rowid, bm25(chunks) AS score FROM chunks WHERE chunks MATCH ?"
+    )
+    params: list[str | int] = [match_expr]
+    if source_filter is not None:
+        sql += " AND source_id IN (SELECT id FROM sources WHERE label = ?)"
+        params.append(source_filter)
+    if content_type is not None:
+        sql += " AND content_type = ?"
+        params.append(content_type)
+    sql += " ORDER BY rank LIMIT ?"
+    params.append(limit)
     return _with_retry(
-        lambda: con.execute(
-            "SELECT rowid, bm25(chunks) AS score FROM chunks"
-            " WHERE chunks MATCH ? ORDER BY rank LIMIT ?",
-            (match_expr, limit),
-        ).fetchall()
+        lambda: con.execute(sql, params).fetchall()
     )
 
 
@@ -233,3 +257,33 @@ def get_many(
         ).fetchall()
     )
     return {r[0]: (r[1], r[2], r[3], r[4], r[5]) for r in rows}
+
+
+def filtered_rowids(
+    con: sqlite3.Connection,
+    source_filter: str | None = None,
+    content_type: str | None = None,
+) -> set[int]:
+    """Live chunk rowids surviving the filters (bounds the vector leg)."""
+    sql, params = _append_filters(
+        "SELECT c.rowid FROM chunks AS c", [], source_filter, content_type
+    )
+    return {r[0] for r in _with_retry(lambda: con.execute(sql, params).fetchall())}
+
+
+def live_rowids(con: sqlite3.Connection) -> set[int]:
+    """All live chunk rowids (vectors.SourceAdapter.live_rowids)."""
+    return {
+        r[0] for r in _with_retry(lambda: con.execute("SELECT rowid FROM chunks").fetchall())
+    }
+
+
+def source_hashes(con: sqlite3.Connection) -> dict[int, str]:
+    """sources.id -> content_hash ('' when NULL) for embed change detection."""
+    return dict(
+        _with_retry(
+            lambda: con.execute(
+                "SELECT id, coalesce(content_hash, '') FROM sources"
+            ).fetchall()
+        )
+    )

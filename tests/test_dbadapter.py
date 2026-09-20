@@ -263,6 +263,31 @@ def test_bm25_search_no_match_returns_empty(con):
     assert dbadapter.bm25_search(con, "zzznomatchhere", 5) == []
 
 
+def test_bm25_search_source_filter_where_side(con):
+    # seed: rid1,2 = src-one; rid3 = src-two. "note" matches titles 2 and 3.
+    assert {r[0] for r in dbadapter.bm25_search(con, "note", 5)} == {2, 3}
+    assert {r[0] for r in dbadapter.bm25_search(con, "note", 5, source_filter="src-two")} == {3}
+    assert dbadapter.bm25_search(con, "note", 5, source_filter="ghost") == []
+    # a query matching only src-one content returns nothing under src-two
+    assert dbadapter.bm25_search(con, "fox", 5, source_filter="src-two") == []
+
+
+def test_bm25_search_content_type_filter(con):
+    # rid2 is the only "code" chunk; filters must not leak others.
+    assert {r[0] for r in dbadapter.bm25_search(con, "note", 5, content_type="code")} == {2}
+    assert dbadapter.bm25_search(con, "note", 5, source_filter="src-one", content_type="prose") == []
+    assert {r[0] for r in dbadapter.bm25_search(con, "note", 5, source_filter="src-one", content_type="code")} == {2}
+
+
+def test_filtered_rowids_and_source_helpers(con):
+    assert dbadapter.filtered_rowids(con) == {1, 2, 3}
+    assert dbadapter.filtered_rowids(con, source_filter="src-two") == {3}
+    assert dbadapter.filtered_rowids(con, content_type="code") == {2}
+    assert dbadapter.filtered_rowids(con, source_filter="ghost") == set()
+    assert dbadapter.live_rowids(con) == {1, 2, 3}
+    assert dbadapter.source_hashes(con) == {1: "", 2: ""}  # NULL → '' coalesce
+    # (vectors.sync stores hash "" for missing sources — same bucket)
+
 # ---------------------------------------------------------------- get_many
 
 
