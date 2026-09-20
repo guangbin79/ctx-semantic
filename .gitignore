@@ -1,0 +1,15 @@
+# local model + data artifacts
+models/
+data/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# tooling
+.pytest_cache/
+.ruff_cache/
