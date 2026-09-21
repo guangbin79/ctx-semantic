@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ctx_semantic.vectors import connect, search, sync
+from ctx_semantic.vectors import DEFAULT_MODEL, connect, search, sync
 
 DIM = 8
 
@@ -294,3 +294,90 @@ def test_no_writes_under_opencode_config(tmp_path):
     search(connect(store), StubAdapter(con), path, np.ones(DIM, dtype=np.float32), 3)
     assert {str(p): p.stat().st_mtime_ns for p in files} == before
     assert len(list(root.rglob("*.db"))) == db_count
+
+
+# --- in-memory matrix cache ----------------------------------------------------
+
+
+class ReadCountingCon:
+    """Duck-typed connection proxy counting embeddings-table SELECTs."""
+
+    def __init__(self, con: sqlite3.Connection):
+        self.con = con
+        self.vector_selects = 0
+
+    def execute(self, sql: str, *args):
+        if "FROM embeddings" in sql:
+            self.vector_selects += 1
+        return self.con.execute(sql, *args)
+
+
+class FixedLive:
+    """Adapter surface search() needs: a fixed live-rowid set."""
+
+    def __init__(self, live: set[int]):
+        self._live = live
+
+    def live_rowids(self):
+        return self._live
+
+
+def test_matrix_cache_second_search_zero_sql_reads(tmp_path):
+    path, con, _ = make_source(tmp_path, 1, 3)
+    store = tmp_path / "v.db"
+    emb = HashEmbedder()
+    sync(StubAdapter(con), emb, path, store_path=store)
+    _, title, content = con.execute(
+        "SELECT rowid, title, content FROM chunks WHERE rowid=2"
+    ).fetchone()
+    q = emb([f"{title}\n{content}"])[0]
+
+    first = ReadCountingCon(connect(store))
+    # the server opens a FRESH connection per call: the cache must span them
+    second = ReadCountingCon(connect(store))
+    got1 = search(first, StubAdapter(con), path, q, 3)
+    got2 = search(second, StubAdapter(con), path, q, 3)
+
+    assert first.vector_selects == 1  # miss: one load
+    assert second.vector_selects == 0  # hit: zero SQLite vector reads
+    assert got1 == got2
+
+
+def test_sync_invalidates_matrix_cache(tmp_path):
+    path, con, _ = make_source(tmp_path, 1, 3)
+    store = tmp_path / "v.db"
+    emb = HashEmbedder()
+    sync(StubAdapter(con), emb, path, store_path=store)
+    rcon = ReadCountingCon(connect(store))
+    search(rcon, StubAdapter(con), path, emb(["t1-0\nbody 1 0 x"])[0], 3)
+    assert rcon.vector_selects == 1
+
+    con.execute("UPDATE chunks SET content='totally rewritten' WHERE rowid=1")
+    con.commit()
+    r = sync(StubAdapter(con), emb, path, store_path=store)  # bumps version
+    assert r["embedded"] == 1
+
+    # a stale matrix would still rank the OLD rowid-1 vector first
+    got = search(rcon, StubAdapter(con), path, emb(["t1-0\ntotally rewritten"])[0], 1)
+    assert rcon.vector_selects == 2  # cache miss after invalidation
+    assert got[0][0] == 1 and got[0][1] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_in_memory_stores_bypass_matrix_cache():
+    # two distinct :memory: stores sharing one db_path: a shared cache entry
+    # would serve store A's matrix to store B (test_hybrid relies on this)
+    def mem_store(rid: int, vec: list[float]) -> sqlite3.Connection:
+        con = connect(":memory:")
+        con.execute(
+            "INSERT INTO embeddings(db_path, chunk_rowid, model, content_hash,"
+            " dim, vec, embedded_at) VALUES(?,?,?,?,?,?,?)",
+            ("/proj.db", rid, DEFAULT_MODEL, "x", 2,
+             np.asarray(vec, dtype=np.float32).tobytes(), 0.0),
+        )
+        con.commit()
+        return con
+
+    live = FixedLive({1, 2})
+    got1 = search(mem_store(1, [1.0, 0.0]), live, "/proj.db", [1.0, 0.0], 1)
+    got2 = search(mem_store(2, [0.0, 1.0]), live, "/proj.db", [0.0, 1.0], 1)
+    assert got1[0][0] == 1 and got2[0][0] == 2
