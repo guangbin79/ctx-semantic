@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_NAME: Final = "jinaai/jina-embeddings-v2-base-zh"
 DIM: Final = 768  # task-1-scaffold.md; re-asserted from live output at load
-DEFAULT_CACHE_DIR: Final = Path("/home/guangbin/ctx-semantic/models")
+DEFAULT_CACHE_DIR: Final = Path.home() / "ctx-semantic" / "models"
 # fastembed default batch 256 needs a ~3 GiB fused-MatMul workspace -> OOM
 # on a 6 GB card; 32 fits. Knob for embed(), see embed_batch.
 EMBED_BATCH_SIZE: Final = 32

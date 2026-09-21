@@ -167,9 +167,12 @@ def search(
             continue
         rows = adapter.get_many(rowids)
         blocks = [
-            f"## {rows[r][0]}\n{rows[r][2] or ''}\n{_excerpt(rows[r][1], query)}"
+            f"## {row[0]}\n{row[2] or ''}\n{_excerpt(row[1], query)}"
             for r in rowids
+            if (row := rows.get(r)) is not None  # rowid deleted mid-race
         ]
+        if not blocks:
+            continue  # every candidate vanished: omit this query's section
         sections.append(f"### 查询 {qi + 1}：{query}\n\n" + "\n\n".join(blocks))
 
     if not sections:

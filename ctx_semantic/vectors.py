@@ -50,12 +50,12 @@ class SourceAdapter(Protocol):
 
     snapshot_chunks() must return (rowid, title, content, source_id,
     content_type, timestamp) tuples captured inside one transaction, so
-    rowids and source hashes stay mutually consistent. Chunks whose
-    source_id has no entry in source_hashes() store hash "" and are
-    re-embedded on every sync.
+    rowids and source hashes stay mutually consistent. Chunks whose source
+    has no usable hash ('' value or no entry in source_hashes()) are
+    re-embedded on every sync — their changes are otherwise undetectable.
     """
 
-    def snapshot_chunks(self) -> list[tuple[int, str, str, int, str, float]]: ...
+    def snapshot_chunks(self) -> list[tuple[int, str, str, int, str, str | None]]: ...
 
     def source_hashes(self) -> dict[int, str]: ...
 
@@ -93,7 +93,9 @@ def sync(
     Every live chunk rowid that is missing from the store, or whose
     source-level content_hash changed, gets embedded as ``title\\ncontent``
     and upserted; stored rows whose rowid no longer exists in the source are
-    deleted. Returns {"embedded", "removed", "total"} — total counted back
+    deleted. Sources without a usable hash ('' or absent) cannot be change-
+    detected, so their chunks re-embed on EVERY sync. Returns
+    {"embedded", "removed", "total"} — total counted back
     from the store, not accumulated arithmetically.
 
     Known granularity: content_hash lives on the sources table, so one
@@ -124,7 +126,7 @@ def sync(
             todo = [
                 (rid, title, content, hashes.get(sid, ""))
                 for rid, title, content, sid, _ct, _ts in chunks
-                if stored.get(rid) != hashes.get(sid, "")
+                if not hashes.get(sid, "") or stored.get(rid) != hashes[sid]
             ]
             stale = [rid for rid in stored if rid not in live]
             embedded = 0

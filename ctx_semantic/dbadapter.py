@@ -195,9 +195,12 @@ def _escape_fts(query: str) -> str | None:
     """Neutralize FTS5 query syntax: every token becomes a quoted phrase.
 
     ``a AND b*`` -> ``"a" "AND" "b*"`` — operators/wildcards degrade to literal
-    tokens instead of crashing MATCH. Returns None for a whitespace-only query.
+    tokens instead of crashing MATCH. Tokens with no alphanumeric character
+    (e.g. "???") are dropped: FTS5 builds exist that reject phrases which
+    tokenize to zero tokens. Returns None when nothing survives (whitespace-
+    or punctuation-only query) — an empty BM25 leg, not an error.
     """
-    tokens = query.split()
+    tokens = [t for t in query.split() if any(ch.isalnum() for ch in t)]
     if not tokens:
         return None
     return " ".join('"' + t.replace('"', '""') + '"' for t in tokens)

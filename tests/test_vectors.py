@@ -143,6 +143,25 @@ def test_deletion_reclaims_store_rows(tmp_path):
     ).fetchone()[0] == 0
 
 
+def test_hashless_source_reembeds_every_sync(tmp_path):
+    # OCR #6 (branch taken: the live corpus has hash-less sources): a ''
+    # hash means change detection is impossible, so those chunks re-embed
+    # on EVERY sync; a real hash restores incremental behavior.
+    path, con, _ = make_source(tmp_path, 1, 2)
+    con.execute("UPDATE sources SET content_hash='' WHERE id=1")
+    con.commit()
+    store, emb = tmp_path / "v.db", HashEmbedder()
+    assert sync(StubAdapter(con), emb, path, store_path=store)["embedded"] == 2
+    assert sync(StubAdapter(con), emb, path, store_path=store)["embedded"] == 2
+    con.execute("UPDATE sources SET content_hash='h1' WHERE id=1")
+    con.commit()
+    bumped = sync(StubAdapter(con), emb, path, store_path=store)
+    assert bumped["embedded"] == 2  # '' -> 'h1' is a detected change
+    assert sync(StubAdapter(con), emb, path, store_path=store) == {
+        "embedded": 0, "removed": 0, "total": 2,
+    }
+
+
 def test_topk_matches_reference_bruteforce(tmp_path):
     path, con, texts = make_source(tmp_path, 3, 4)
     rng = np.random.default_rng(42)

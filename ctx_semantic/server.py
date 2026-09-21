@@ -20,6 +20,7 @@ Run via ../run.sh (LD_LIBRARY_PATH for the CUDA EP) or:
 
 from __future__ import annotations
 
+import threading
 import time
 
 from mcp.server.mcpserver import MCPServer
@@ -30,16 +31,25 @@ from ctx_semantic.embedder import Embedder
 
 mcp = MCPServer("ctx-semantic")
 
+# Re-sync a DB at most this often: keeps the vector leg live over long
+# server sessions while BM25 stays live on every query (syncs are cheap
+# in steady state — embedded=0 for hashed sources).
+RESYNC_INTERVAL_S = 300.0
+
 _embedder: Embedder | None = None
 _synced_dbs: set[str] = set()
+_synced_at: dict[str, float] = {}
+_state_lock = threading.Lock()
 
 
 def _get_embedder() -> Embedder:
-    """Construct the Embedder lazily — import-time must stay seconds-fast."""
+    """Construct the Embedder lazily and exactly once across threads."""
     global _embedder
-    if _embedder is None:
-        _embedder = Embedder()
-    return _embedder
+    with _state_lock:
+        if _embedder is None:
+            _embedder = Embedder()
+        return _embedder
+
 
 
 @mcp.tool()
@@ -73,6 +83,9 @@ def ctx_hybrid_search(
         lifetime may embed newly indexed chunks and prepends one
         "(embedded N chunks in Xs)" progress line.
     """
+    if not 1 <= len(queries) <= 3:
+        raise ValueError("queries must contain 1-3 items")
+    limit = max(1, min(limit, 10))
     db = projhash.resolve_db(project_path)
     if not db.is_file():
         # projhash contract: an unindexed project resolves to a nonexistent
@@ -82,13 +95,21 @@ def ctx_hybrid_search(
     try:
         adapter = BoundAdapter(con, db)
         synced_info: str | None = None
-        if str(db) not in _synced_dbs:
+        key = str(db)
+        with _state_lock:
+            stale = (
+                key not in _synced_dbs
+                or time.time() - _synced_at.get(key, 0.0) > RESYNC_INTERVAL_S
+            )
+        if stale:
             started = time.perf_counter()
             counts = vectors.sync(adapter, _get_embedder().embed_batch, db)
             elapsed = time.perf_counter() - started
             if counts["embedded"] > 0:
                 synced_info = f"(embedded {counts['embedded']} chunks in {elapsed:.1f}s)"
-            _synced_dbs.add(str(db))
+            with _state_lock:
+                _synced_dbs.add(key)
+                _synced_at[key] = time.time()
         vcon = vectors.connect()
         try:
             return hybrid.search(

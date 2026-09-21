@@ -263,6 +263,19 @@ def test_bm25_search_no_match_returns_empty(con):
     assert dbadapter.bm25_search(con, "zzznomatchhere", 5) == []
 
 
+def test_bm25_search_punctuation_only_returns_empty(con):
+    # OCR #1: punctuation-only queries must degrade to an empty BM25 leg
+    # instead of reaching MATCH (FT5 builds exist that reject phrases
+    # tokenizing to zero tokens).
+    for q in ("???", "——…", "...", '"??"'):
+        assert dbadapter.bm25_search(con, q, 5) == []
+
+
+def test_bm25_search_punctuation_around_keyword_keeps_match(con):
+    # punctuation tokens drop; the alphanumeric token still matches rid 1.
+    assert dbadapter.bm25_search(con, "?? fox ??", 5)[0][0] == 1
+
+
 def test_bm25_search_source_filter_where_side(con):
     # seed: rid1,2 = src-one; rid3 = src-two. "note" matches titles 2 and 3.
     assert {r[0] for r in dbadapter.bm25_search(con, "note", 5)} == {2, 3}

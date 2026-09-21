@@ -336,3 +336,44 @@ def test_fts5_syntax_query_no_crash(tmp_path):
     # escaping is dbadapter's job: the raw string reached the BM25 leg intact
     assert adapter.bm25_queries[0] == nasty
     assert isinstance(out, str) and "deploy doc" in out
+
+
+def test_search_rowid_deleted_mid_race_no_keyerror():
+    # OCR #2: get_many silently omits a rowid deleted mid-race — rendering
+    # must skip the vanished chunk, not raise KeyError.
+    store = make_store(BASIS_STORE)
+    partial = {1: CHUNKS[1], 3: CHUNKS[3]}  # rid 2 deleted mid-race
+    adapter = StubAdapter(bm25={"deploy": [(1, 0.5), (2, 0.4)]}, chunks=partial)
+    emb = StubEmbedder({"deploy": E1})
+    out = search(adapter, store, emb, ["deploy"], limit=2)
+    assert "## 部署手册" in out
+    assert "缓存策略" not in out  # the vanished chunk's block is skipped
+
+
+def test_search_all_rowids_vanished_omits_section():
+    # Every rowid the fused list owns vanished in get_many: the section is
+    # omitted entirely and the result degrades to the friendly empty string.
+    store = make_store({})
+    adapter = StubAdapter(bm25={"deploy": [(9, 0.5)]}, chunks={})
+    emb = StubEmbedder({"deploy": E1})
+    assert search(adapter, store, emb, ["deploy"], limit=2) == NO_RESULTS
+
+
+def test_search_punctuation_only_query_degrades_to_vector_leg(tmp_path):
+    # OCR #1 end-to-end: "???" empties the BM25 leg; the vector leg still
+    # serves, and nothing raises.
+    path = tmp_path / "src.db"
+    con = sqlite3.connect(path)
+    con.execute(SOURCES_DDL)
+    con.execute(FTS_DDL)
+    con.execute("INSERT INTO sources (id, label) VALUES (1, 'src')")
+    con.execute(
+        "INSERT INTO chunks (title, content, source_id, content_type)"
+        " VALUES ('deploy doc', 'deploy the service now', 1, 'note')"
+    )
+    con.commit()
+    adapter = RealAdapter(con, path)
+    store = make_store({1: E1})
+    emb = StubEmbedder({"?? ?": E1, "deploy": E1})
+    out = search(adapter, store, emb, ["?? ?", "deploy"], limit=2)
+    assert isinstance(out, str) and "deploy doc" in out

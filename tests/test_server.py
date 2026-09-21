@@ -10,6 +10,8 @@ fixture DB. Schema assertions hit the real MCPServer registration.
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -112,7 +114,9 @@ def tool_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(vectors, "DEFAULT_STORE", tmp_path / "store.db")
     monkeypatch.setattr(server, "_embedder", None)  # teardown restores prior value
     monkeypatch.setattr(server, "Embedder", StubEmbedder)
+    monkeypatch.setattr(server, "time", time)  # undo faked clocks from other tests
     server._synced_dbs.clear()
+    server._synced_at.clear()
     return db
 
 
@@ -224,3 +228,94 @@ def test_cold_start_lazy_construct_and_sync_once(
     assert sync_calls == [1]  # no re-sync for the same DB in-process
     assert "(embedded" not in out2  # and no second progress line
     assert "alpha deploy guide" in out2
+
+
+# --- OCR #3/#4/#5: TTL re-sync, thread-safe cold start, input validation ---
+
+
+class FakeClock:
+    """Stand-in for the time module: both time() and perf_counter()."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def time(self) -> float:
+        return self.now
+
+    def perf_counter(self) -> float:
+        return self.now
+
+
+def test_resync_after_ttl(tool_env: Path, monkeypatch: pytest.MonkeyPatch):
+    clock = FakeClock()
+    monkeypatch.setattr(server, "time", clock)
+    sync_calls: list[int] = []
+    real_sync = vectors.sync
+
+    def counting_sync(*args, **kwargs):
+        sync_calls.append(1)
+        return real_sync(*args, **kwargs)
+
+    monkeypatch.setattr(server.vectors, "sync", counting_sync)
+
+    server.ctx_hybrid_search(queries=["deploy"])
+    assert sync_calls == [1]
+    clock.now += server.RESYNC_INTERVAL_S - 1  # inside TTL: no re-sync
+    server.ctx_hybrid_search(queries=["deploy"])
+    assert sync_calls == [1]
+    clock.now += 2  # past TTL: vector leg goes stale, sync again
+    server.ctx_hybrid_search(queries=["deploy"])
+    assert sync_calls == [1, 1]
+
+
+def test_embedder_constructed_once_across_threads(monkeypatch: pytest.MonkeyPatch):
+    constructions: list[int] = []
+
+    class SlowStubEmbedder:
+        def __init__(self) -> None:
+            constructions.append(1)
+            time.sleep(0.02)  # widen the cold-start race window
+
+    monkeypatch.setattr(server, "Embedder", SlowStubEmbedder)
+    monkeypatch.setattr(server, "_embedder", None)
+    got: list = []
+
+    def construct():
+        got.append(server._get_embedder())
+
+    threads = [threading.Thread(target=construct) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(constructions) == 1
+    assert all(e is got[0] for e in got)
+
+
+def test_tool_rejects_wrong_query_count(tool_env: Path):
+    for queries in ([], ["a"] * 4, ["a"] * 5):
+        with pytest.raises(ValueError, match="1-3"):
+            server.ctx_hybrid_search(queries=queries)
+
+
+def test_tool_limit_clamped_to_range(
+    tool_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    db = make_db(tmp_path / "big.db")
+    con = sqlite3.connect(db)
+    con.executemany(
+        "INSERT INTO chunks (title, content, source_id, content_type)"
+        " VALUES (?, ?, 1, 'session')",
+        [(f"deploy extra {i}", f"deploy filler content {i}") for i in range(12)],
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setenv("CTX_SEMANTIC_DB", str(db))
+    server._synced_dbs.clear()
+    server._synced_at.clear()
+
+    def block_count(resp: str) -> int:
+        return sum(1 for line in resp.splitlines() if line.startswith("## "))
+
+    assert block_count(server.ctx_hybrid_search(queries=["deploy"], limit=99)) == 10
+    assert block_count(server.ctx_hybrid_search(queries=["deploy"], limit=-3)) == 1
