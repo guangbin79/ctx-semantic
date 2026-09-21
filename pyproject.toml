@@ -17,6 +17,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest",
+    "pytest-cov>=7.1.0",
     "ruff",
 ]
 
@@ -30,4 +31,13 @@ packages = ["ctx_semantic"]
 [tool.pytest.ini_options]
 markers = [
     "integration: touches real on-disk context-mode DBs (read-only opens)",
+]
+
+[tool.coverage.run]
+source = ["ctx_semantic"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
 ]

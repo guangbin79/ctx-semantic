@@ -45,4 +45,12 @@ uv run python -c "import onnxruntime; print(onnxruntime.get_available_providers(
   `all_proxy` (its `socks://` scheme is rejected by httpx; `https_proxy=http://…` is fine).
 - GPU inference needs the nvidia-wheel lib dirs on LD_LIBRARY_PATH — `run.sh`
   sets this up automatically.
+
+```
+
+## Testing
+
+```sh
+uv run pytest -q                # plain run
+uv run pytest --cov=ctx_semantic --cov-report=term-missing
 ```

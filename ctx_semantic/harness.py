@@ -36,8 +36,10 @@ from __future__ import annotations
 
 import argparse
 import time
+from collections.abc import Sequence
 from math import ceil
 from pathlib import Path
+from typing import NamedTuple
 
 from ctx_semantic import dbadapter, hybrid, projhash, vectors
 from ctx_semantic.binding import BoundAdapter
@@ -100,6 +102,59 @@ def _fmt(rank: int | None) -> str:
     return "—" if rank is None else str(rank)
 
 
+class Gates(NamedTuple):
+    """Threshold arithmetic result over harness rows (see evaluate)."""
+
+    n: int
+    bm25_hits: int
+    hybrid_hits: int
+    not_worse: int  # incl. both-miss ∞≤∞ rows (reported, never gated)
+    binding_not_worse: int  # winnable rows only: BM25 hit AND hybrid not-worse
+    rescues: int
+    t1: bool
+    t2: bool
+    t3: bool
+
+    @property
+    def ok(self) -> bool:
+        return self.t1 and self.t2 and self.t3
+
+
+Row = tuple[str, str, str, int | None, int | None]
+
+
+def evaluate(rows: Sequence[Row]) -> Gates:
+    """Pure gate arithmetic over (query, lang, title, bm25_rank, hybrid_rank).
+
+    A hit means rank is not None and rank <= TOP_K; a miss counts as rank
+    infinity (both-miss ∞≤∞ is "not-worse" in the reported count but can
+    never fail the binding gate). Gate 2 passes vacuously when bm25_hits
+    is 0 — there are no winnable rows.
+    """
+    bm25_hits = sum(1 for r in rows if r[3] is not None and r[3] <= TOP_K)
+    hybrid_hits = sum(1 for r in rows if r[4] is not None and r[4] <= TOP_K)
+    not_worse = sum(
+        1 for r in rows if r[3] is None or (r[4] is not None and r[4] <= r[3])
+    )
+    binding_not_worse = sum(
+        1 for r in rows if r[3] is not None and r[4] is not None and r[4] <= r[3]
+    )
+    rescues = sum(
+        1 for r in rows if r[3] is None and r[4] is not None and r[4] <= TOP_K)
+    n = len(rows)
+    return Gates(
+        n=n,
+        bm25_hits=bm25_hits,
+        hybrid_hits=hybrid_hits,
+        not_worse=not_worse,
+        binding_not_worse=binding_not_worse,
+        rescues=rescues,
+        t1=hybrid_hits >= bm25_hits,
+        t2=bm25_hits == 0 or binding_not_worse >= max(1, ceil(0.8 * bm25_hits)),
+        t3=rescues >= 1,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ctx_semantic.harness",
@@ -142,25 +197,11 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         con.close()
 
-    bm25_hits = sum(1 for r in rows if r[3] is not None and r[3] <= TOP_K)
-    hybrid_hits = sum(1 for r in rows if r[4] is not None and r[4] <= TOP_K)
-    not_worse = sum(
-        1 for r in rows if r[3] is None or (r[4] is not None and r[4] <= r[3])
-    )  # miss = rank infinity: both-miss counts as not-worse (reported line)
-    # binding gate: on rows BM25 actually hit, hybrid must hit and not be
-    # worse — the winnable rows (a both-miss ∞≤∞ row can never fail the gate)
-    binding_not_worse = sum(
-        1 for r in rows if r[3] is not None and r[4] is not None and r[4] <= r[3]
-    )
-    rescues = sum(
-        1 for r in rows if r[3] is None and r[4] is not None and r[4] <= TOP_K
-    )
-    n = len(rows)
-    t1 = hybrid_hits >= bm25_hits
-    t2 = bm25_hits == 0 or binding_not_worse >= max(1, ceil(0.8 * bm25_hits))
-    t3 = rescues >= 1
+    g = evaluate(rows)
     t2_label = (
-        "PASS (vacuous: bm25_hits=0)" if bm25_hits == 0 else "PASS" if t2 else "FAIL"
+        "PASS (vacuous: bm25_hits=0)"
+        if g.bm25_hits == 0
+        else "PASS" if g.t2 else "FAIL"
     )
 
     lines = [
@@ -203,9 +244,9 @@ def main(argv: list[str] | None = None) -> int:
     lines += [
         "",
         (
-            f"**Totals (n={n}):** BM25 top-5 hits **{bm25_hits}** · hybrid top-5 hits"
-            f" **{hybrid_hits}** · not-worse **{not_worse}/{n}** · BM25-zero→hybrid-hit"
-            f" **{rescues}**"
+            f"**Totals (n={g.n}):** BM25 top-5 hits **{g.bm25_hits}** · hybrid top-5 hits"
+            f" **{g.hybrid_hits}** · not-worse **{g.not_worse}/{g.n}** · BM25-zero→hybrid-hit"
+            f" **{g.rescues}**"
         ),
         "",
         (
@@ -217,27 +258,29 @@ def main(argv: list[str] | None = None) -> int:
         "## Thresholds",
         "",
         (
-            f"1. hybrid hit-rate ({hybrid_hits}/{n}) >= BM25 ({bm25_hits}/{n}):"
-            f" **{'PASS' if t1 else 'FAIL'}**"
+            f"1. hybrid hit-rate ({g.hybrid_hits}/{g.n}) >= BM25 ({g.bm25_hits}/{g.n}):"
+            f" **{'PASS' if g.t1 else 'FAIL'}**"
         ),
         (
-            f"2. binding not-worse >= max(1, ceil(0.8*{bm25_hits}))"
-            f" = {max(1, ceil(0.8 * bm25_hits))}: {binding_not_worse}/{bm25_hits}:"
+            f"2. binding not-worse >= max(1, ceil(0.8*{g.bm25_hits}))"
+            f" = {max(1, ceil(0.8 * g.bm25_hits))}: {g.binding_not_worse}/{g.bm25_hits}:"
             f" **{t2_label}**"
-            f" (overall not-worse incl. both-miss ∞≤∞ rows: {not_worse}/{n})"
+            f" (overall not-worse incl. both-miss ∞≤∞ rows: {g.not_worse}/{g.n})"
         ),
         (
-            f"3. >=1 BM25-zero-hit rescued by hybrid: {rescues}:"
-            f" **{'PASS' if t3 else 'FAIL'}**"
+            f"3. >=1 BM25-zero-hit rescued by hybrid: {g.rescues}:"
+            f" **{'PASS' if g.t3 else 'FAIL'}**"
         ),
         "",
     ]
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text("\n".join(lines), encoding="utf-8")
     print(f"report: {REPORT_PATH}")
-    print(f"bm25_hits={bm25_hits} hybrid_hits={hybrid_hits}"
-          f" not_worse={not_worse}/{n} rescues={rescues}")
-    ok = t1 and t2 and t3
+    print(
+        f"bm25_hits={g.bm25_hits} hybrid_hits={g.hybrid_hits}"
+        f" not_worse={g.not_worse}/{g.n} rescues={g.rescues}"
+    )
+    ok = g.ok
     print(f"thresholds: {'ALL PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 
