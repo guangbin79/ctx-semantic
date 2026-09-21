@@ -3,7 +3,7 @@
 vectors.sync and Embedder are stubbed (no model load, no store writes); the
 DB open + BoundAdapter wiring run against a real context-mode-shaped fixture
 DB. Covers: call args, printed lines, --db relative .resolve(), --all scan,
---project chain, missing-DB skip.
+--project chain, missing-DB skip, --prune dead-path removal.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from ctx_semantic import projhash, warmup
+from ctx_semantic import projhash, vectors, warmup
 from ctx_semantic.binding import BoundAdapter
 
 SOURCES_DDL = """
@@ -238,4 +238,88 @@ def test_main_project_resolves_hashed_db(
 def test_main_nonexistent_project_dir_is_parser_error(tmp_path: Path):
     with pytest.raises(SystemExit) as exc:
         warmup.main(["--project", str(tmp_path / "never")])
+    assert exc.value.code == 2
+
+
+# --- --prune ------------------------------------------------------------------
+
+
+def seed_store(store: Path, rows: dict[str, int]) -> None:
+    """Insert placeholder vector rows per (db_path, count)."""
+    con = vectors.connect(store)
+    try:
+        for db_path, n in rows.items():
+            for rid in range(1, n + 1):
+                con.execute(
+                    "INSERT INTO embeddings(db_path, chunk_rowid, model, content_hash,"
+                    " dim, vec, embedded_at) VALUES(?,?,?,?,?,?,?)",
+                    (db_path, rid, vectors.DEFAULT_MODEL, "x", 4, b"\x00" * 16, 0.0),
+                )
+        con.commit()
+    finally:
+        con.close()
+
+
+def test_prune_removes_only_dead_db_paths(tmp_path: Path, capsys):
+    live1, live2 = tmp_path / "one.db", tmp_path / "two.db"
+    live1.write_bytes(b"x")
+    live2.write_bytes(b"x")
+    dead = str(tmp_path / "gone.db")
+    store = tmp_path / "v.db"
+    seed_store(store, {str(live1): 2, dead: 3, str(live2): 1})
+
+    removed = warmup.prune(store)
+
+    assert removed == {dead: 3}
+    out = capsys.readouterr().out
+    assert f"pruned 3 rows (dead db_path): {dead}" in out
+    assert "2 live paths kept" in out
+    con = vectors.connect(store)
+    try:
+        assert con.execute(
+            "SELECT count(*), count(DISTINCT db_path) FROM embeddings"
+        ).fetchone() == (3, 2)  # both live paths survived, only dead rows went
+    finally:
+        con.close()
+
+
+def test_prune_all_live_is_noop(tmp_path: Path, capsys):
+    live = tmp_path / "live.db"
+    live.write_bytes(b"x")
+    store = tmp_path / "v.db"
+    seed_store(store, {str(live): 2})
+
+    assert warmup.prune(store) == {}
+
+    con = vectors.connect(store)
+    try:
+        assert con.execute("SELECT count(*) FROM embeddings").fetchone()[0] == 2
+    finally:
+        con.close()
+    assert "removed 0 rows across 0 dead paths" in capsys.readouterr().out
+
+
+def test_main_prune_uses_default_store_and_skips_embedder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    class ExplodingEmbedder:
+        def __init__(self) -> None:
+            raise AssertionError("prune must not load the embedding model")
+
+    store = tmp_path / "v.db"
+    monkeypatch.setattr(warmup.vectors, "DEFAULT_STORE", store)
+    monkeypatch.setattr(warmup, "Embedder", ExplodingEmbedder)
+    dead = str(tmp_path / "purged.db")
+    seed_store(store, {dead: 2})
+
+    assert warmup.main(["--prune"]) == 0
+
+    out = capsys.readouterr().out
+    assert f"pruned 2 rows (dead db_path): {dead}" in out
+    assert "model=" not in out  # prune path never reports a model/device
+
+
+def test_main_prune_conflicts_with_db(tmp_path: Path):
+    with pytest.raises(SystemExit) as exc:
+        warmup.main(["--prune", "--db", str(tmp_path / "any.db")])
     assert exc.value.code == 2

@@ -1,14 +1,15 @@
 """Pre-embed missing chunks into the sidecar vector store (T7 warmup CLI).
 
 Usage:
-    uv run python -m ctx_semantic.warmup [--db PATH | --project DIR | --all]
+    uv run python -m ctx_semantic.warmup [--db PATH | --project DIR | --all | --prune]
 
 --db embeds one explicit content DB; --project resolves a project directory
 through projhash (same chain as the server: $CTX_SEMANTIC_DB >
 $OPENCODE_PROJECT_DIR > the given dir); --all scans every content DB under
-~/.config/opencode/context-mode/content/. With no flag the current project
-(cwd chain) is warmed. Run BEFORE registering the server with opencode (T8
-gate) so the first real query is model-load-only.
+~/.config/opencode/context-mode/content/; --prune deletes stored vector
+rows whose source DB no longer exists on disk (no model load). With no
+flag the current project (cwd chain) is warmed. Run BEFORE registering the
+server with opencode (T8 gate) so the first real query is model-load-only.
 
 Reads context-mode DBs strictly read-only; writes go only to
 ~/ctx-semantic/data/vectors.db.
@@ -45,6 +46,37 @@ def warm_one(db: Path, embedder: Embedder) -> dict[str, int]:
     return counts
 
 
+def prune(store_path: Path | None = None) -> dict[str, int]:
+    """Delete vector rows whose source db_path no longer exists on disk.
+
+    Returns {dead db_path: removed row count}; prints per-path counts.
+    """
+    con = vectors.connect(store_path)
+    try:
+        paths = [
+            r[0]
+            for r in con.execute(
+                "SELECT DISTINCT db_path FROM embeddings ORDER BY db_path"
+            )
+        ]
+        removed: dict[str, int] = {}
+        for p in paths:
+            if not Path(p).is_file():
+                removed[p] = con.execute(
+                    "DELETE FROM embeddings WHERE db_path=?", (p,)
+                ).rowcount
+        con.commit()
+    finally:
+        con.close()
+    for p, n in removed.items():
+        print(f"pruned {n} rows (dead db_path): {p}")
+    print(
+        f"prune: removed {sum(removed.values())} rows across {len(removed)} dead paths"
+        f" ({len(paths) - len(removed)} live paths kept)"
+    )
+    return removed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ctx_semantic.warmup",
@@ -56,7 +88,15 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument(
         "--all", action="store_true", help="warm every content DB under the content dir"
     )
+    group.add_argument(
+        "--prune", action="store_true",
+        help="remove vector rows whose source content DB no longer exists",
+    )
     args = parser.parse_args(argv)
+
+    if args.prune:
+        prune()
+        return 0
 
     if args.db is not None:
         dbs = [args.db.resolve()]  # store keys must be absolute, like the server's
