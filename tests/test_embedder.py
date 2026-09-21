@@ -8,12 +8,18 @@ inside Embedder is verified via nvidia-smi PID lookup, not provider names
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from ctx_semantic.embedder import DEFAULT_CACHE_DIR, DIM, Embedder
+from ctx_semantic.embedder import (
+    DEFAULT_CACHE_DIR,
+    DIM,
+    Embedder,
+    _apply_hf_env,
+)
 
 CACHE_DIR = Path(DEFAULT_CACHE_DIR)
 
@@ -69,3 +75,15 @@ def test_query_unit_norm_float32(embedder: Embedder):
     v = embedder.embed_query("单位范数检查")
     assert v.dtype == np.float32
     assert abs(float(np.linalg.norm(v)) - 1.0) < 1e-5
+
+
+def test_apply_hf_env_proxy_opt_out(monkeypatch: pytest.MonkeyPatch):
+    # OCR #11: CTX_SEMANTIC_KEEP_PROXY=1 keeps proxy vars (e.g. when the
+    # mirror itself must be reached through one); default still strips them.
+    monkeypatch.setenv("https_proxy", "http://127.0.0.1:7890")
+    monkeypatch.setenv("CTX_SEMANTIC_KEEP_PROXY", "1")
+    _apply_hf_env()
+    assert os.environ["https_proxy"] == "http://127.0.0.1:7890"
+    monkeypatch.delenv("CTX_SEMANTIC_KEEP_PROXY")
+    _apply_hf_env()
+    assert "https_proxy" not in os.environ

@@ -6,7 +6,7 @@ is obsolete). zh/en bilingual, which is why the bilingual cosine sanity test
 must hold.
 
 Embedding input spec:
-- document side: title + "\\n\\n" + content, assembled by the caller; this
+- document side: title + "\\n" + content, assembled by the caller; this
   layer embeds whatever string it receives.
 - query side: raw query text. jina v2 takes NO instruction/passage prefix
   (unlike bge/e5 families); adding one would corrupt the embedding.
@@ -65,15 +65,18 @@ def _apply_hf_env() -> None:
     verified working on this host (direct hf-mirror ~2 MB/s; proxied
     huggingface.co ~110 KB/s; xet 401s against the mirror). Idempotent —
     explicit HF_HUB_DISABLE_XET/HF_ENDPOINT values win via setdefault, proxy
-    vars are dropped because the working combo is direct.
+    vars are dropped because the working combo is direct. Set
+    CTX_SEMANTIC_KEEP_PROXY=1 to opt out of the proxy strip (e.g. when the
+    mirror itself is only reachable through one).
     """
     os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-    for var in (
-        "all_proxy", "ALL_PROXY", "http_proxy", "https_proxy",
-        "HTTP_PROXY", "HTTPS_PROXY",
-    ):
-        os.environ.pop(var, None)
+    if os.environ.get("CTX_SEMANTIC_KEEP_PROXY") != "1":
+        for var in (
+            "all_proxy", "ALL_PROXY", "http_proxy", "https_proxy",
+            "HTTP_PROXY", "HTTPS_PROXY",
+        ):
+            os.environ.pop(var, None)
 
 
 _apply_hf_env()
@@ -220,7 +223,7 @@ class Embedder:
     def embed_batch(self, texts: list[str]) -> npt.NDArray[np.float32]:
         """Embed documents -> (n, 768) float32, rows L2-normalized.
 
-        Callers pass title + "\\n\\n" + content per document (see module
+        Callers pass title + "\\n" + content per document (see module
         docstring). A CUDA-time failure (e.g. OOM) rebuilds on CPU once and
         retries; the fallback is logged and `device` flips to "cpu".
         """

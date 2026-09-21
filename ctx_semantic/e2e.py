@@ -195,7 +195,6 @@ def main() -> int:
     for name in ("first", "steady", "ghost"):
         print(f"{name} response head: {responses[name].splitlines()[0][:120]}")
     return 0
-    return 0
 
 
 if __name__ == "__main__":
