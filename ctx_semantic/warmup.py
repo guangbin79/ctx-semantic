@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.db is not None:
-        dbs = [args.db]
+        dbs = [args.db.resolve()]  # store keys must be absolute, like the server's
     elif args.all:
         dbs = sorted(projhash.CONTENT_DIR.glob("*.db"))
     else:

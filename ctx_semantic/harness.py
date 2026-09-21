@@ -21,22 +21,26 @@ corpus is hash-less, so every sync re-embeds — see vectors.sync).
 
 Writes the report to ~/.omo/evidence/ctx-semantic/recall-report.md and exits
 0 only if all three thresholds hold: (1) hybrid top-5 hit-rate >= BM25's,
-(2) >=7 of the queries not worse (hybrid rank <= BM25 rank; a miss counts as
-rank infinity, so both-miss is "not-worse"), (3) >=1 query where BM25 misses
-top-5 and hybrid hits. A FAIL is reported honestly, not tuned away.
+(2) binding not-worse: on >= max(1, ceil(0.8 * bm25_hits)) of the rows BM25
+actually hits, hybrid also hits and is not worse (hybrid rank <= BM25 rank —
+the winnable rows; a miss counts as rank infinity, so both-miss ∞≤∞ is
+"not-worse" but can never fail and is reported, not gated), (3) >=1 query
+where BM25 misses top-5 and hybrid hits. A FAIL is reported honestly, not
+tuned away.
 """
 
 from __future__ import annotations
 
 import argparse
 import time
+from math import ceil
 from pathlib import Path
 
 from ctx_semantic import dbadapter, hybrid, projhash, vectors
 from ctx_semantic.binding import BoundAdapter
 from ctx_semantic.embedder import Embedder
 
-PROJECT = "/home/guangbin"  # default corpus anchor (projhash resolve_db)
+PROJECT = Path.home()  # default corpus anchor (projhash resolve_db)
 
 TOP_K = 5  # hit window — mirrors the server tool's limit
 VEC_K = 20  # max(4*TOP_K, 20) — hybrid.search's vector-leg width
@@ -102,7 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         "--db", type=Path, help="explicit content DB (default: projhash resolve of PROJECT)"
     )
     args = parser.parse_args(argv)
-    db = args.db if args.db is not None else projhash.resolve_db(PROJECT)
+    # resolve() so the store key matches the server's absolute-path key (#5)
+    db = (args.db if args.db is not None else projhash.resolve_db(PROJECT)).resolve()
     con = dbadapter.open_db(db)
     try:
         adapter = BoundAdapter(con, db)
@@ -138,13 +143,18 @@ def main(argv: list[str] | None = None) -> int:
     hybrid_hits = sum(1 for r in rows if r[4] is not None and r[4] <= TOP_K)
     not_worse = sum(
         1 for r in rows if r[3] is None or (r[4] is not None and r[4] <= r[3])
-    )  # miss = rank infinity: both-miss counts as not-worse (doc'd semantics)
+    )  # miss = rank infinity: both-miss counts as not-worse (reported line)
+    # binding gate: on rows BM25 actually hit, hybrid must hit and not be
+    # worse — the winnable rows (a both-miss ∞≤∞ row can never fail the gate)
+    binding_not_worse = sum(
+        1 for r in rows if r[3] is not None and r[4] is not None and r[4] <= r[3]
+    )
     rescues = sum(
         1 for r in rows if r[3] is None and r[4] is not None and r[4] <= TOP_K
     )
     n = len(rows)
     t1 = hybrid_hits >= bm25_hits
-    t2 = not_worse >= 7
+    t2 = binding_not_worse >= max(1, ceil(0.8 * bm25_hits))
     t3 = rescues >= 1
 
     lines = [
@@ -152,9 +162,8 @@ def main(argv: list[str] | None = None) -> int:
         "",
         f"- date: {time.strftime('%Y-%m-%d %H:%M %Z')}  db: `{db}`",
         (
-            f"- corpus: OSMDataCompiler ({chunk_total} chunks) — **real DB only,"
-            f" no fixture rows; resampled 2026-09-21** (previous home-project DB"
-            f" purged by the context-mode 1.0.169 upgrade)"
+            f"- corpus: `{db.name}` ({chunk_total} chunks) — **real DB only,"
+            f" no fixture rows**"
         ),
         (
             f"- sync before run: embedded={counts['embedded']} removed={counts['removed']}"
@@ -205,7 +214,12 @@ def main(argv: list[str] | None = None) -> int:
             f"1. hybrid hit-rate ({hybrid_hits}/{n}) >= BM25 ({bm25_hits}/{n}):"
             f" **{'PASS' if t1 else 'FAIL'}**"
         ),
-        f"2. not-worse >= 7: {not_worse}/{n}: **{'PASS' if t2 else 'FAIL'}**",
+        (
+            f"2. binding not-worse >= max(1, ceil(0.8*{bm25_hits}))"
+            f" = {max(1, ceil(0.8 * bm25_hits))}: {binding_not_worse}/{bm25_hits}:"
+            f" **{'PASS' if t2 else 'FAIL'}**"
+            f" (overall not-worse incl. both-miss ∞≤∞ rows: {not_worse}/{n})"
+        ),
         (
             f"3. >=1 BM25-zero-hit rescued by hybrid: {rescues}:"
             f" **{'PASS' if t3 else 'FAIL'}**"
