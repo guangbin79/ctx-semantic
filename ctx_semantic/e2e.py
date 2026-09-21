@@ -5,14 +5,22 @@ while still feeding the MCP SDK's pipe — after the session, every captured
 line must parse as a JSON-RPC frame (stdio purity: stdout carries ONLY MCP
 protocol bytes; anything else corrupts the protocol stream).
 
-Prerequisite: `uv run python -m ctx_semantic.warmup --project /home/guangbin`
-so first-query latency measures steady state (model load + incremental sync,
-not a full embed). Records startup / first-query / steady-state latencies and
-verifies returned titles really exist in the real content DB.
+Prerequisite: `uv run python -m ctx_semantic.warmup --project $HOME` (or warm
+the DB given here via ``--db`` — the spawned server receives it as
+CTX_SEMANTIC_DB) so first-query latency measures steady state (model load +
+incremental sync, not a full embed). Records startup / first-query /
+steady-state latencies and verifies returned titles really exist in the real
+content DB.
+
+``--db PATH`` is the escape hatch for corpora whose project dir no longer
+resolves (context-mode purges): with it the FULL happy path runs against
+that DB; without it the default project resolution applies, falling back
+to the missing-DB smoke when the project has no content DB.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import sqlite3
@@ -27,7 +35,7 @@ from ctx_semantic import projhash
 RUN_SH = Path(__file__).resolve().parent.parent / "run.sh"
 RAW_STDOUT = Path("/tmp/ctx-semantic-e2e-stdout.log")
 RAW_STDERR = Path("/tmp/ctx-semantic-e2e-stderr.log")
-PROJECT = "/home/guangbin"
+PROJECT = Path.home()
 
 QUERIES = [
     "向量检索与混合搜索",  # zh — must yield a Chinese-labeled section
@@ -47,8 +55,8 @@ def _titles(resp: str) -> list[str]:
     return [line[3:] for line in resp.splitlines() if line.startswith("## ")]
 
 
-def _assert_titles_are_real(resp: str) -> None:
-    db = projhash.resolve_db(PROJECT)
+def _assert_titles_are_real(resp: str, db: Path) -> None:
+    titles = [t for t in _titles(resp) if t.strip()]
     titles = [t for t in _titles(resp) if t.strip()]
     assert titles, "no title lines in response"
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
@@ -80,11 +88,12 @@ def _assert_stdout_purity() -> None:
     print(f"stdout purity: {sum(1 for l in lines if l.strip())} frames, all JSON-RPC")
 
 
-async def _run_session() -> tuple[dict[str, float | str], dict[str, str]]:
+async def _run_session(db: Path | None) -> tuple[dict[str, float | str], dict[str, str]]:
     params = StdioServerParameters(
         command="sh",
         args=["-c", f"'{RUN_SH}' 2>>'{RAW_STDERR}' | tee '{RAW_STDOUT}'"],
         cwd=PROJECT,
+        env={"CTX_SEMANTIC_DB": str(db)} if db is not None else None,
     )
     timings: dict[str, float | str] = {}
     responses: dict[str, str] = {}
@@ -168,14 +177,28 @@ def _missing_db_smoke() -> int:
     return 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="ctx_semantic.e2e",
+        description="E2E stdio client driving the REAL ctx-semantic server.",
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        help="explicit content DB; the spawned server gets CTX_SEMANTIC_DB=<abs path>",
+    )
+    args = parser.parse_args(argv)
     RAW_STDOUT.write_text("")
     RAW_STDERR.write_text("")
-    if not projhash.resolve_db(PROJECT).is_file():
-        # context-mode 1.0.169 purged the home-project DB — exercise the
-        # friendly degradation path instead of the full-result assertions.
+    explicit = args.db.resolve() if args.db is not None else None
+    if explicit is not None and not explicit.is_file():
+        parser.error(f"--db does not exist: {explicit}")
+    default_db = projhash.resolve_db(PROJECT)
+    if explicit is None and not default_db.is_file():
+        # context-mode may purge stale project DBs — exercise the friendly
+        # degradation path instead of the full-result assertions.
         return _missing_db_smoke()
-    timings, responses = asyncio.run(_run_session())
+    timings, responses = asyncio.run(_run_session(explicit))
     time.sleep(0.2)  # let tee flush the last frames
 
     # --- content assertions (never trust exit codes alone) ---
@@ -183,7 +206,7 @@ def main() -> int:
     assert responses["steady"].count("### 查询") == 3, responses["steady"][:300]
     assert QUERIES[0] in responses["steady"], "Chinese query section missing"
     assert responses["ghost"] == "(no results)", responses["ghost"][:200]
-    _assert_titles_are_real(responses["steady"])
+    _assert_titles_are_real(responses["steady"], explicit or default_db)
 
     # --- stdio purity ---
     _assert_stdout_purity()
