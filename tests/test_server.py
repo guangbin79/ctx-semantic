@@ -115,8 +115,8 @@ def tool_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(server, "_embedder", None)  # teardown restores prior value
     monkeypatch.setattr(server, "Embedder", StubEmbedder)
     monkeypatch.setattr(server, "time", time)  # undo faked clocks from other tests
-    server._synced_dbs.clear()
     server._synced_at.clear()
+    server._sync_interval.clear()
     return db
 
 
@@ -234,12 +234,15 @@ def test_cold_start_lazy_construct_and_sync_once(
 
 
 class FakeClock:
-    """Stand-in for the time module: both time() and perf_counter()."""
+    """Stand-in for the time module: time(), monotonic(), perf_counter()."""
 
     def __init__(self) -> None:
         self.now = 1000.0
 
     def time(self) -> float:
+        return self.now
+
+    def monotonic(self) -> float:
         return self.now
 
     def perf_counter(self) -> float:
@@ -260,12 +263,147 @@ def test_resync_after_ttl(tool_env: Path, monkeypatch: pytest.MonkeyPatch):
 
     server.ctx_hybrid_search(queries=["deploy"])
     assert sync_calls == [1]
+    # the cold sync embedded everything (3/3) -> hash-less backoff window;
+    # pin the standard interval so THIS test exercises the 300s boundary
+    with server._state_lock:
+        server._sync_interval[str(tool_env)] = server.RESYNC_INTERVAL_S
     clock.now += server.RESYNC_INTERVAL_S - 1  # inside TTL: no re-sync
     server.ctx_hybrid_search(queries=["deploy"])
     assert sync_calls == [1]
     clock.now += 2  # past TTL: vector leg goes stale, sync again
     server.ctx_hybrid_search(queries=["deploy"])
     assert sync_calls == [1, 1]
+
+
+class SplitClock:
+    """time() jumps with the wall clock; monotonic()/perf_counter() do not."""
+
+    def __init__(self) -> None:
+        self.wall = 1_000_000.0
+        self.mono = 500.0
+
+    def time(self) -> float:
+        return self.wall
+
+    def monotonic(self) -> float:
+        return self.mono
+
+    def perf_counter(self) -> float:
+        return self.mono
+
+
+def _counting_sync(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Patch vectors.sync with a call counter; returns the counter list."""
+    sync_calls: list[int] = []
+    real_sync = vectors.sync
+
+    def counting_sync(*args, **kwargs):
+        sync_calls.append(1)
+        return real_sync(*args, **kwargs)
+
+    monkeypatch.setattr(server.vectors, "sync", counting_sync)
+    return sync_calls
+
+
+def test_ttl_expiry_sync_runs_once_across_threads(
+    tool_env: Path, monkeypatch: pytest.MonkeyPatch
+):
+    server.ctx_hybrid_search(queries=["deploy"])  # initial sync claims the key
+    key = str(tool_env)
+    with server._state_lock:
+        server._synced_at[key] -= (  # force expiry under whatever interval applies
+            server._sync_interval.get(key, server.RESYNC_INTERVAL_S) + 1
+        )
+
+    sync_calls: list[int] = []
+    real_sync = vectors.sync
+    real_sleep = time.sleep
+
+    def counting_slow_sync(*args, **kwargs):  # widen the race window
+        sync_calls.append(1)
+        real_sleep(0.02)
+        return real_sync(*args, **kwargs)
+
+    monkeypatch.setattr(server.vectors, "sync", counting_slow_sync)
+    barrier = threading.Barrier(2)
+
+    def query():
+        barrier.wait()  # both threads hit the stale check together
+        server.ctx_hybrid_search(queries=["deploy"])
+
+    threads = [threading.Thread(target=query) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(sync_calls) == 1  # the claim dedups: exactly one sync ran
+
+
+def test_sync_ttl_ignores_wall_clock_jumps(
+    tool_env: Path, monkeypatch: pytest.MonkeyPatch
+):
+    clock = SplitClock()
+    monkeypatch.setattr(server, "time", clock)
+    sync_calls = _counting_sync(monkeypatch)
+
+    server.ctx_hybrid_search(queries=["deploy"])  # claimed at mono=500
+    clock.wall -= 3600  # NTP step backwards — must not extend freshness
+    server.ctx_hybrid_search(queries=["deploy"])
+    clock.wall += 7200  # NTP step far forwards — must not fake expiry
+    server.ctx_hybrid_search(queries=["deploy"])
+    assert len(sync_calls) == 1  # monotonic age is still ~0
+
+
+def test_hashless_backoff_after_full_reembed(
+    tool_env: Path, monkeypatch: pytest.MonkeyPatch
+):
+    clock = FakeClock()
+    monkeypatch.setattr(server, "time", clock)
+    sync_calls = _counting_sync(monkeypatch)
+    key = str(tool_env)
+
+    server.ctx_hybrid_search(queries=["deploy"])  # cold sync: embedded=3=total
+    assert server._sync_interval[key] == server.HASHLESS_RESYNC_INTERVAL_S
+
+    clock.now += server.RESYNC_INTERVAL_S + 1  # past the STANDARD interval
+    server.ctx_hybrid_search(queries=["deploy"])  # backoff holds: no sync
+    assert len(sync_calls) == 1
+
+    clock.now += server.HASHLESS_RESYNC_INTERVAL_S  # past the long interval
+    con = sqlite3.connect(tool_env)
+    con.execute("UPDATE sources SET content_hash='h2b' WHERE id=2")  # 2 of 3
+    con.commit()
+    con.close()
+    server.ctx_hybrid_search(queries=["deploy"])  # partial sync (2 < 3)
+    assert len(sync_calls) == 2
+    assert server._sync_interval[key] == server.RESYNC_INTERVAL_S
+
+    clock.now += server.RESYNC_INTERVAL_S + 1  # standard window applies again
+    server.ctx_hybrid_search(queries=["deploy"])
+    assert len(sync_calls) == 3
+
+
+def test_failed_sync_resets_claim_for_retry(
+    tool_env: Path, monkeypatch: pytest.MonkeyPatch
+):
+    calls: list[int] = []
+    real_sync = vectors.sync
+
+    def flaky_sync(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("embedder exploded")
+        return real_sync(*args, **kwargs)
+
+    monkeypatch.setattr(server.vectors, "sync", flaky_sync)
+
+    with pytest.raises(RuntimeError, match="embedder exploded"):
+        server.ctx_hybrid_search(queries=["deploy"])
+    assert str(tool_env) not in server._synced_at  # claim reset, not false-fresh
+
+    out = server.ctx_hybrid_search(queries=["deploy"])  # retries the sync
+    assert len(calls) == 2
+    assert "alpha deploy guide" in out
 
 
 def test_embedder_constructed_once_across_threads(monkeypatch: pytest.MonkeyPatch):
@@ -311,8 +449,8 @@ def test_tool_limit_clamped_to_range(
     con.commit()
     con.close()
     monkeypatch.setenv("CTX_SEMANTIC_DB", str(db))
-    server._synced_dbs.clear()
     server._synced_at.clear()
+    server._sync_interval.clear()
 
     def block_count(resp: str) -> int:
         return sum(1 for line in resp.splitlines() if line.startswith("## "))

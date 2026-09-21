@@ -35,10 +35,14 @@ mcp = MCPServer("ctx-semantic")
 # server sessions while BM25 stays live on every query (syncs are cheap
 # in steady state — embedded=0 for hashed sources).
 RESYNC_INTERVAL_S = 300.0
+# Hash-less corpora (every source lacks a usable content_hash) re-embed
+# the WHOLE corpus on every sync — a 5-minute TTL would burn a full
+# re-embed per interval for zero freshness gain, so back off to hourly.
+HASHLESS_RESYNC_INTERVAL_S = 3600.0
 
 _embedder: Embedder | None = None
-_synced_dbs: set[str] = set()
-_synced_at: dict[str, float] = {}
+_synced_at: dict[str, float] = {}  # key -> monotonic claim time (set at claim)
+_sync_interval: dict[str, float] = {}  # key -> seconds until next sync is due
 _state_lock = threading.Lock()
 
 
@@ -49,6 +53,24 @@ def _get_embedder() -> Embedder:
         if _embedder is None:
             _embedder = Embedder()
         return _embedder
+
+
+def _claim_sync(key: str) -> bool:
+    """Claim the sync slot for key; True only for the one caller that wins.
+
+    The claim timestamp is written under the lock BEFORE the sync runs, so
+    cold-start/TTL-expiry dedup is exact: concurrent callers of a stale key
+    see a fresh claim and skip instead of queueing their own full re-embed.
+    A sync that raises must release the claim so the next call retries.
+    """
+    now = time.monotonic()
+    with _state_lock:
+        if key in _synced_at and now - _synced_at[key] <= _sync_interval.get(
+            key, RESYNC_INTERVAL_S
+        ):
+            return False
+        _synced_at[key] = now
+        return True
 
 
 
@@ -96,20 +118,26 @@ def ctx_hybrid_search(
         adapter = BoundAdapter(con, db)
         synced_info: str | None = None
         key = str(db)
-        with _state_lock:
-            stale = (
-                key not in _synced_dbs
-                or time.time() - _synced_at.get(key, 0.0) > RESYNC_INTERVAL_S
-            )
-        if stale:
+        if _claim_sync(key):
             started = time.perf_counter()
-            counts = vectors.sync(adapter, _get_embedder().embed_batch, db)
+            try:
+                counts = vectors.sync(adapter, _get_embedder().embed_batch, db)
+            except BaseException:
+                with _state_lock:
+                    _synced_at.pop(key, None)  # a false-fresh claim blocks retries
+                raise
             elapsed = time.perf_counter() - started
             if counts["embedded"] > 0:
                 synced_info = f"(embedded {counts['embedded']} chunks in {elapsed:.1f}s)"
+            # embedded == total marks the full re-embed of a hash-less corpus —
+            # the shape that repeats on EVERY sync; widen the next interval.
+            interval = (
+                HASHLESS_RESYNC_INTERVAL_S
+                if counts["total"] > 0 and counts["embedded"] >= counts["total"]
+                else RESYNC_INTERVAL_S
+            )
             with _state_lock:
-                _synced_dbs.add(key)
-                _synced_at[key] = time.time()
+                _sync_interval[key] = interval
         vcon = vectors.connect()
         try:
             return hybrid.search(
