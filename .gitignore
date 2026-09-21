@@ -13,3 +13,7 @@ build/
 # tooling
 .pytest_cache/
 .ruff_cache/
+
+# coverage + agent session state
+.coverage
+.omo/
