@@ -209,11 +209,15 @@ def test_concurrent_sync_embeds_once(tmp_path):
 
     t = threading.Thread(target=run)
     t.start()
-    time.sleep(0.05)  # let the thread grab the lock first
+    time.sleep(0.05)  # favors the thread winning the lock; assertions below
+    # are winner-agnostic — the LOCK is the mechanism, the sleep only picks
+    # which caller embeds.
     main = sync(StubAdapter(con), emb, path, store_path=store)
     t.join()
     assert sum(map(len, emb.calls)) == 6, "each chunk embedded exactly once"
-    assert out["t"]["embedded"] == 6 and main == {"embedded": 0, "removed": 0, "total": 6}
+    assert sorted([out["t"]["embedded"], main["embedded"]]) == [0, 6], (
+        "one caller embeds everything, the other finds nothing left"
+    )
     assert connect(store).execute("SELECT count(*) FROM embeddings").fetchone()[0] == 6
 
 
@@ -227,6 +231,23 @@ def test_corrupt_store_delete_rebuilds(tmp_path):
     r = sync(StubAdapter(con), HashEmbedder(), path, store_path=store)
     assert r == {"embedded": 4, "removed": 0, "total": 4}
     assert connect(store).execute("SELECT count(*) FROM embeddings").fetchone()[0] == 4
+
+
+def test_embedder_short_batch_raises_strict_zip(tmp_path):
+    # a truncated embedder stream must fail loudly (zip strict), never
+    # silently store fewer vectors than chunks.
+    path, con, _ = make_source(tmp_path, 1, 3)
+    store = tmp_path / "v.db"
+
+    class ShortEmbedder:
+        def __call__(self, texts):
+            assert len(texts) == 3
+            return [np.zeros(DIM, dtype=np.float32) for _ in texts[:-1]]
+
+    with pytest.raises(ValueError, match="zip"):
+        sync(StubAdapter(con), ShortEmbedder(), path, store_path=store)
+    vc = connect(store)
+    assert vc.execute("SELECT count(*) FROM embeddings").fetchone()[0] == 0
 
 
 def test_dim_mismatch_raises(tmp_path):

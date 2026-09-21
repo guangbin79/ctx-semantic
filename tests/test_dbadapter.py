@@ -248,10 +248,20 @@ def test_bm25_search_ranked_results(con):
 
 
 def test_bm25_search_escapes_special_characters(con):
-    # Any of these would raise fts5 syntax errors if passed raw.
-    for raw in ['"', "AND", "*", "(", "hello AND (world*", '") OR ("']:
-        rows = dbadapter.bm25_search(con, raw, 5)
-        assert isinstance(rows, list)
+    # Any of these would raise fts5 syntax errors if passed raw — and the
+    # degraded behavior is value-semantic: operators become literal tokens,
+    # so "AND" matches exactly the chunks containing the word "and" (rids
+    # 2+3), and an implicit-AND query no chunk satisfies returns nothing.
+    expected = {
+        '"': set(),
+        "AND": {2, 3},
+        "*": set(),
+        "(": set(),
+        "hello AND (world*": set(),  # "hello" is rid 1, "and" is not
+        '") OR ("': set(),
+    }
+    for raw, want in expected.items():
+        assert {r[0] for r in dbadapter.bm25_search(con, raw, 5)} == want, raw
 
 
 def test_bm25_search_plain_terms_still_match(con):
@@ -388,8 +398,42 @@ def test_real_db_readonly_open_and_match():
         n = len(dbadapter.list_chunks(c))
         assert n > 0, "real DB unexpectedly empty"
         hits = dbadapter.bm25_search(c, "laya", 5)
-        assert isinstance(hits, list)
+        # a live DB with zero hits would silently skip the loop below and
+        # mask the match/get_many roundtrip — require the path to run.
+        assert hits, "real DB present but 'laya' matches nothing"
         for rowid, _score in hits:
-            assert rowid in dbadapter.get_many(c, [rowid])
+            got = dbadapter.get_many(c, [rowid])
+            assert rowid in got and got[rowid][0]  # rowid + non-empty title
     finally:
         c.close()
+
+
+def test_bm25_search_mixed_alnum_token_survives_escaping(con):
+    # "fox!" has an alnum char so it must survive token dropping (dropped
+    # here would silently empty the BM25 leg); quoted, it matches rid 1.
+    assert [r[0] for r in dbadapter.bm25_search(con, "fox!", 5)] == [1]
+
+
+def test_bm25_search_limit_is_enforced(con):
+    # LIMIT must bind: more matches than the limit returns exactly the limit.
+    con_rw = sqlite3.connect(con.execute("PRAGMA database_list").fetchone()[2])
+    con_rw.execute("PRAGMA query_only=OFF")
+    con_rw.executemany(
+        "INSERT INTO chunks (title, content, source_id, content_type)"
+        " VALUES ('note filler', 'shared filler body text', 1, 'prose')",
+        [()] * 7,
+    )
+    con_rw.commit()
+    con_rw.close()
+    for limit in (1, 3, 5):
+        rows = dbadapter.bm25_search(con, "filler", limit)
+        assert len(rows) == limit, f"LIMIT {limit} returned {len(rows)}"
+
+
+def test_retryable_classification():
+    # exactly the SQLITE_BUSY-class messages retry; anything else surfaces
+    # immediately (an or->and slip here would silently drop one keyword).
+    assert dbadapter._retryable(sqlite3.OperationalError("database is locked"))
+    assert dbadapter._retryable(sqlite3.OperationalError("database is busy"))
+    assert not dbadapter._retryable(sqlite3.OperationalError("no such table: x"))
+    assert not dbadapter._retryable(sqlite3.OperationalError("unable to open"))

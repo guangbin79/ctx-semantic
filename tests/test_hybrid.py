@@ -377,3 +377,39 @@ def test_search_punctuation_only_query_degrades_to_vector_leg(tmp_path):
     emb = StubEmbedder({"?? ?": E1, "deploy": E1})
     out = search(adapter, store, emb, ["?? ?", "deploy"], limit=2)
     assert isinstance(out, str) and "deploy doc" in out
+
+
+def test_rrf_default_k_is_60():
+    # the server path never passes k — pin the default through hand-computed
+    # scores (k=61 would shift 1/61 -> 1/62 on every term).
+    got = rrf([(10, 0.1)], [(10, 0.9), (20, 0.5)])
+    assert got == [
+        (10, pytest.approx(1 / 61 + 1 / 61)),
+        (20, pytest.approx(1 / 62)),
+    ]
+
+
+def test_rrf_equal_scores_break_tie_by_rowid_ascending():
+    # both docs at ranks (1,2) -> identical fused scores; deterministic
+    # order is rowid ascending.
+    got = rrf([(5, 0.1), (3, 0.2)], [(3, 0.9), (5, 0.8)])
+    assert [rid for rid, _ in got] == [3, 5]
+    assert got[0][1] == got[1][1]
+
+
+def test_search_vec_k_width_rescues_deep_vector_ranks():
+    # vec_k = max(4*limit, 20): at limit=7 the vector pool is 28 wide, so a
+    # chunk at VECTOR rank 22 that tops the BM25 leg still fuses to the top
+    # (bm25 1/61 + vec 1/82). With a 2*limit pool it is cut from the vector
+    # leg and falls behind every pool member — the width is load-bearing.
+    store = make_store({
+        rid: [1.0, 0.05 * rid, 0.0, 0.0] for rid in range(1, 26)
+    })  # cos vs E1 strictly decreasing in rid: vector rank order == rid order
+    chunks = {rid: (f"doc{rid}", f"body {rid}", "note") for rid in range(1, 26)}
+    adapter = StubAdapter(bm25={"wide": [(22, 0.1)]}, chunks=chunks)
+    emb = StubEmbedder({"wide": E1})
+
+    out = search(adapter, store, emb, ["wide"], limit=7)
+    titles = [line[3:] for line in out.splitlines() if line.startswith("## ")]
+    assert titles[0] == "doc22"  # fused winner: deep vec rank rescued by bm25
+    assert titles[1:] == [f"doc{i}" for i in range(1, 7)]  # vec ranks 1-6

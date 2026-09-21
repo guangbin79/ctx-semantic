@@ -75,6 +75,17 @@ def test_harvested_vectors():
         assert resolve(path) == expected, f"vector mismatch for {path}"
 
 
+def test_yr_root_and_windows_root_normalization():
+    # "/" and "C://" are the two roots whose trailing slash MUST survive
+    # stripping — hashing "/x" instead of "/" would break root-project DBs.
+    from ctx_semantic.projhash import _yr
+
+    assert _yr("///") == "/"
+    assert _yr("//") == "/"
+    assert _yr("C://") == "C:/"
+    assert _yr("/a/b///") == "/a/b"
+
+
 def test_trailing_slash_and_redundant_separators():
     assert resolve("/home/guangbin/") == resolve("/home/guangbin")
     assert resolve("/home/guangbin///") == resolve("/home/guangbin")

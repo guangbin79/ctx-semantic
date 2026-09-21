@@ -457,3 +457,39 @@ def test_tool_limit_clamped_to_range(
 
     assert block_count(server.ctx_hybrid_search(queries=["deploy"], limit=99)) == 10
     assert block_count(server.ctx_hybrid_search(queries=["deploy"], limit=-3)) == 1
+
+def test_resync_boundary_age_equal_interval_is_fresh(
+    tool_env: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # age == interval is still fresh (<= in _claim_sync): exactly at the TTL
+    # there is no re-sync; one tick later there is.
+    clock = FakeClock()
+    monkeypatch.setattr(server, "time", clock)
+    sync_calls = _counting_sync(monkeypatch)
+    key = str(tool_env)
+
+    server.ctx_hybrid_search(queries=["deploy"])
+    with server._state_lock:  # pin standard interval (cold sync was hashless)
+        server._sync_interval[key] = server.RESYNC_INTERVAL_S
+
+    clock.now += server.RESYNC_INTERVAL_S  # exactly at the boundary
+    server.ctx_hybrid_search(queries=["deploy"])
+    assert len(sync_calls) == 1  # fresh — claim holds
+
+    clock.now += 1  # strictly past it
+    server.ctx_hybrid_search(queries=["deploy"])
+    assert len(sync_calls) == 2
+
+
+def test_resync_with_zero_embedded_has_no_progress_line(
+    tool_env: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # the progress line is a signal about REAL work: a TTL re-sync that
+    # embeds nothing must stay silent (>= 0 would prepend it everywhere).
+    clock = FakeClock()
+    monkeypatch.setattr(server, "time", clock)
+    server.ctx_hybrid_search(queries=["deploy"])  # cold sync: embedded 3
+    clock.now += server.HASHLESS_RESYNC_INTERVAL_S + 1
+    out = server.ctx_hybrid_search(queries=["deploy"])  # re-sync, embedded=0
+    assert "(embedded" not in out
+    assert "alpha deploy guide" in out  # results still served
