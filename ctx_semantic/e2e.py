@@ -57,7 +57,6 @@ def _titles(resp: str) -> list[str]:
 
 def _assert_titles_are_real(resp: str, db: Path) -> None:
     titles = [t for t in _titles(resp) if t.strip()]
-    titles = [t for t in _titles(resp) if t.strip()]
     assert titles, "no title lines in response"
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:

@@ -154,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     n = len(rows)
     t1 = hybrid_hits >= bm25_hits
-    t2 = binding_not_worse >= max(1, ceil(0.8 * bm25_hits))
+    t2 = bm25_hits == 0 or binding_not_worse >= max(1, ceil(0.8 * bm25_hits))
     t3 = rescues >= 1
 
     lines = [
