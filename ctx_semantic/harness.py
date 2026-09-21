@@ -1,28 +1,34 @@
-"""One-shot BM25-vs-hybrid recall harness over the REAL project DB (T8).
+"""One-shot BM25-vs-hybrid recall harness over a REAL project DB (T8).
 
-Ground truth is programmatic: gold chunks were sampled read-only from the
-/home/guangbin content DB (projhash-resolved), and each query below is a
-hand-written paraphrase of one sampled chunk (Chinese paraphrases of English
-chunks carry zero lexical overlap — the case pure BM25 cannot serve; English
-and mixed queries keep the BM25 leg non-empty so RRF fusion is genuinely
-exercised). A hit means the gold chunk's ROWID appears in the top-5 — chunk
-identity, never title substrings.
+Ground truth is programmatic: gold chunks were sampled read-only from a
+live content DB, and each query below is a hand-written paraphrase of one
+sampled chunk (Chinese paraphrases of English chunks carry zero lexical
+overlap — the case pure BM25 cannot serve; English and mixed queries keep
+the BM25 leg non-empty so RRF fusion is genuinely exercised). A hit means
+the gold chunk's ROWID appears in the top-5 — chunk identity, never title
+substrings.
+
+Corpus: resampled 2026-09-21 from the OSMDataCompiler content DB
+(53883986ad0936d4, 659 chunks) via ``--db`` — the original home-project
+corpus was purged by the context-mode 1.0.169 upgrade.
 
 Per query the harness runs the exact T7 server ranking path at limit=5:
 dbadapter.bm25_search(query, 5) vs hybrid.rrf(bm25, vectors.search(qvec,
 k=20)) — the same two legs and fusion hybrid.search applies before its
 markdown rendering. Read-only on the context-mode DB; the sidecar store gets
-one idempotent vectors.sync (steady state: embedded=0).
+one idempotent vectors.sync (steady state: embedded=0; the OSMDataCompiler
+corpus is hash-less, so every sync re-embeds — see vectors.sync).
 
 Writes the report to ~/.omo/evidence/ctx-semantic/recall-report.md and exits
 0 only if all three thresholds hold: (1) hybrid top-5 hit-rate >= BM25's,
 (2) >=7 of the queries not worse (hybrid rank <= BM25 rank; a miss counts as
-rank infinity, so both-miss is "not worse"), (3) >=1 query where BM25 misses
+rank infinity, so both-miss is "not-worse"), (3) >=1 query where BM25 misses
 top-5 and hybrid hits. A FAIL is reported honestly, not tuned away.
 """
 
 from __future__ import annotations
 
+import argparse
 import time
 from pathlib import Path
 
@@ -30,40 +36,48 @@ from ctx_semantic import dbadapter, hybrid, projhash, vectors
 from ctx_semantic.binding import BoundAdapter
 from ctx_semantic.embedder import Embedder
 
-PROJECT = "/home/guangbin"
+PROJECT = "/home/guangbin"  # default corpus anchor (projhash resolve_db)
+
 TOP_K = 5  # hit window — mirrors the server tool's limit
 VEC_K = 20  # max(4*TOP_K, 20) — hybrid.search's vector-leg width
 REPORT_PATH = Path.home() / ".omo" / "evidence" / "ctx-semantic" / "recall-report.md"
 
-# (query, lang, gold_rowid, gold_title) — paraphrases authored 2026-09-20 from
-# a read-only sample of the real DB. gold_title guards rowid drift: the harness
-# aborts (exit 2) if the rowid no longer holds the recorded chunk.
+# (query, lang, gold_rowid, gold_title) — paraphrases authored 2026-09-21
+# from a read-only sample of the OSMDataCompiler DB (53883986ad0936d4).
+# gold_title guards rowid drift: the harness aborts (exit 2) if the rowid
+# no longer holds the recorded chunk.
 CASES: list[tuple[str, str, int, str]] = [
     # --- zh: pure-CJK paraphrases of English chunks (zero lexical overlap) ---
-    ("记忆分层里哪一层只活在当前会话里、会话一结束就被硬性丢弃", "zh", 53,
-     "ai-memory - Architecture > Storage architecture (3)"),
-    ("那个能装进手机、手表、机器人、智能家居和单片机里运行的迷你基础模型体积有多大",
-     "zh", 1628, "A foundation model for mobiles, wearables, robots, smart home, automotive and mi"),
-    ("鉴权用的活跃凭证分成几类、浏览器兼容的过渡路径又是哪条", "zh", 60,
-     "ai-memory - Architecture > HTTP authentication classes"),
-    ("外壳脚本钩子把生命周期事件数据用什么方式投递给服务端", "zh", 48,
-     "ai-memory - Architecture > Data flow (2)"),
-    ("故障发生后逐级恢复的分层策略一共有几层、分别是什么", "zh", 92,
-     "Squad > Watch Mode — Ralph's Automated Polling > Error Recovery (4-Tier Escalation)"),
-    ("这台机器设的是什么时区、有没有夏令时", "zh", 573, "timezone and cron env"),
+    ("一个目录里最多允许存放多少个瓦片文件", "zh", 867, "Lines 73-92"),
+    ("整数值超出三十二位范围时字段值会改用哪个更宽的类型", "zh", 890,
+     "sValue.eType = (nVal >= INT_MIN && nVal <= INT_MAX)"),
+    ("解码线串几何时先跳过移动命令的变元再读坐标增量", "zh", 916,
+     "poMultiPoint->addGeometryDirectly(poPoint);"),
+    ("解析协议缓冲出错时打印调试日志然后直接返回失败", "zh", 982,
+     'CPLDebug("MVT", "Protobuf error: line %d",'),
+    ("往临时表写瓦片时把行列号序号和二进制块绑定到插入语句", "zh", 1102,
+     "sqlite3_bind_int(m_hInsertStmt, 2, nTileX);"),
+    ("瓦片压缩后仍超出大小上限就逐级把范围值减半", "zh", 1141,
+     "size_t nSizeBefore = oTileBuffer.size();"),
+    ("从临时数据库按层级和行列顺序读出全部瓦片组装输出", "zh", 1152,
+     "std::map<CPLString, MVTLayerProperties> oMapLayerProps;"),
+    ("驱动元数据里声明支持哪几种查询方言", "zh", 1212, '"Boolean Float32");'),
     # --- en: lexical overlap present — BM25 leg non-empty, RRF fused ---
-    ("human-directed development team specialists frontend backend tester Copilot",
-     "en", 76, "Squad > What is Squad?"),
-    ("Ralph continuously polls for work and dispatches agents watch mode",
-     "en", 87, "Squad > Watch Mode — Ralph's Automated Polling"),
-    ("bundle local embedding model API-key-free homelab image bloat",
-     "en", 67, "ai-memory - Architecture > Future work"),
-    ("Needle Laddered Simple Attention Network Monarch Hadamard MLP",
-     "en", 1631, "Needle 3 is a Laddered Simple Attention Network: a Monarch Hadamard MLP in place"),
+    # (FTS5 MATCH is an implicit AND of all tokens, so these are authored
+    #  with tokens that co-occur in the gold chunk.)
+    ("ferry 1.1px step", "en", 809,
+     "Map Styles > Strategies > Ferry 缩放线宽 (2026-05-27)"),
+    ("tunnel transit railway", "en", 828,
+     "Map Styles > Bug Experience > tunnel-transit 被道路遮挡 (2026-06-02)"),
+    ("131 road classes day json", "en", 779,
+     "Map Styles > Decisions > 完整道路层级 50→131 层 (2026-04-16)"),
+    ("nproc CPU_CORES DEFAULT_THREADS", "en", 1311,
+     "自动检测 CPU 核心数，默认使用一半核心防止系统过载"),
     # --- mixed zh+en: single Latin token keeps BM25 matching, vector carries semantics ---
-    ("Squad 一条命令拉起一支帮你推进代码的团队", "mixed", 75, "Squad"),
-    ("watch 模式怎么开启自动执行、轮询间隔怎么设", "mixed", 88,
-     "Squad > Watch Mode — Ralph's Automated Polling > Quick Start"),
+    ("ogr2ogr 不修改任何输入", "mixed", 838,
+     "total 83796 chars"),
+    ("business anchor 方案", "mixed", 797,
+     "Map Styles > Decisions > business anchor v2 实施 (2026-08-07)"),
 ]
 
 
@@ -79,8 +93,16 @@ def _fmt(rank: int | None) -> str:
     return "—" if rank is None else str(rank)
 
 
-def main() -> int:
-    db = projhash.resolve_db(PROJECT)
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="ctx_semantic.harness",
+        description="BM25-vs-hybrid recall harness over a real content DB.",
+    )
+    parser.add_argument(
+        "--db", type=Path, help="explicit content DB (default: projhash resolve of PROJECT)"
+    )
+    args = parser.parse_args(argv)
+    db = args.db if args.db is not None else projhash.resolve_db(PROJECT)
     con = dbadapter.open_db(db)
     try:
         adapter = BoundAdapter(con, db)
@@ -115,9 +137,11 @@ def main() -> int:
     bm25_hits = sum(1 for r in rows if r[3] is not None and r[3] <= TOP_K)
     hybrid_hits = sum(1 for r in rows if r[4] is not None and r[4] <= TOP_K)
     not_worse = sum(
-        1 for r in rows if r[4] is not None and (r[3] is None or r[4] <= r[3])
+        1 for r in rows if r[3] is None or (r[4] is not None and r[4] <= r[3])
+    )  # miss = rank infinity: both-miss counts as not-worse (doc'd semantics)
+    rescues = sum(
+        1 for r in rows if r[3] is None and r[4] is not None and r[4] <= TOP_K
     )
-    rescues = sum(1 for r in rows if r[3] is None and r[4] is not None)
     n = len(rows)
     t1 = hybrid_hits >= bm25_hits
     t2 = not_worse >= 7
@@ -126,8 +150,12 @@ def main() -> int:
     lines = [
         "# ctx-semantic recall report — BM25 vs hybrid (top-5 hit)",
         "",
-        f"- date: {time.strftime('%Y-%m-%d %H:%M %Z')}  project: `{PROJECT}`",
-        f"- db: `{db}` ({chunk_total} chunks)  — **real DB only, no fixture rows**",
+        f"- date: {time.strftime('%Y-%m-%d %H:%M %Z')}  db: `{db}`",
+        (
+            f"- corpus: OSMDataCompiler ({chunk_total} chunks) — **real DB only,"
+            f" no fixture rows; resampled 2026-09-21** (previous home-project DB"
+            f" purged by the context-mode 1.0.169 upgrade)"
+        ),
         (
             f"- sync before run: embedded={counts['embedded']} removed={counts['removed']}"
             f" total={counts['total']}  model=jina-v2-base-zh device={embedder.device}"

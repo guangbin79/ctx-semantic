@@ -135,9 +135,46 @@ async def _run_session() -> tuple[dict[str, float | str], dict[str, str]]:
     return timings, responses
 
 
+async def _run_missing_db_session() -> str:
+    """Degradation probe for an unindexed project: one tool call, no model."""
+    params = StdioServerParameters(
+        command="sh",
+        args=["-c", f"'{RUN_SH}' 2>>'{RAW_STDERR}' | tee '{RAW_STDOUT}'"],
+        cwd=PROJECT,
+    )
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        tools = (await session.list_tools()).tools
+        assert [t.name for t in tools] == ["ctx_hybrid_search"]
+        return _text(
+            await session.call_tool(
+                "ctx_hybrid_search", {"queries": ["任何查询"]}
+            )
+        )
+
+
+def _missing_db_smoke() -> int:
+    """Missing content DB must degrade to friendly '(no results)', exit 0.
+
+    projhash contract: an unindexed project resolves to a nonexistent DB;
+    the server treats that as an empty knowledge base, never an error.
+    """
+    resp = asyncio.run(_run_missing_db_session())
+    time.sleep(0.2)  # let tee flush the last frames
+    assert resp == "(no results)", f"missing-DB response: {resp[:200]}"
+    _assert_stdout_purity()
+    print(f"project DB missing ({projhash.resolve_db(PROJECT)})")
+    print("server degraded to '(no results)' — friendly empty, exit 0")
+    return 0
+
+
 def main() -> int:
     RAW_STDOUT.write_text("")
     RAW_STDERR.write_text("")
+    if not projhash.resolve_db(PROJECT).is_file():
+        # context-mode 1.0.169 purged the home-project DB — exercise the
+        # friendly degradation path instead of the full-result assertions.
+        return _missing_db_smoke()
     timings, responses = asyncio.run(_run_session())
     time.sleep(0.2)  # let tee flush the last frames
 

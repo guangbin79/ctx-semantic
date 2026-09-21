@@ -124,10 +124,18 @@ def test_db_path_layout():
     )
 
 
-def test_self_check_guangbin():
-    """Acceptance self-check: DB exists, chunks>0, codegraph dir-name match."""
-    h = resolve("/home/guangbin")
-    assert (PROJECTS_DIR / f"guangbin-{h}").is_dir(), "codegraph dir-name mismatch"
+def test_self_check_this_project():
+    """Acceptance self-check: DB exists, chunks>0, codegraph dir-name match.
+
+    2026-09-21: the /home/guangbin content DB was purged by the
+    context-mode 1.0.169 upgrade, so the check anchors on THIS repo's own
+    project dir — hash resolution + codegraph dir-name + a live content DB
+    verified in one chain.
+    """
+    repo = Path(__file__).resolve().parents[1]
+    h = resolve(str(repo))
+    name = repo.name
+    assert (PROJECTS_DIR / f"{name}-{h}").is_dir(), "codegraph dir-name mismatch"
     db = db_path(h)
     assert db.exists(), f"content DB missing: {db}"
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
