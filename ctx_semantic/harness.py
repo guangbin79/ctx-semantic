@@ -24,7 +24,10 @@ Writes the report to ~/.omo/evidence/ctx-semantic/recall-report.md and exits
 (2) binding not-worse: on >= max(1, ceil(0.8 * bm25_hits)) of the rows BM25
 actually hits, hybrid also hits and is not worse (hybrid rank <= BM25 rank —
 the winnable rows; a miss counts as rank infinity, so both-miss ∞≤∞ is
-"not-worse" but can never fail and is reported, not gated), (3) >=1 query
+"not-worse" but can never fail and is reported, not gated; when
+bm25_hits == 0 there are no winnable rows and gate 2 passes vacuously —
+t1/t3 still gate hybrid quality, though zero BM25 hits on a corpus whose
+CASES include en/mixed queries signals a broken precondition), (3) >=1 query
 where BM25 misses top-5 and hybrid hits. A FAIL is reported honestly, not
 tuned away.
 """
@@ -156,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     t1 = hybrid_hits >= bm25_hits
     t2 = bm25_hits == 0 or binding_not_worse >= max(1, ceil(0.8 * bm25_hits))
     t3 = rescues >= 1
+    t2_label = (
+        "PASS (vacuous: bm25_hits=0)" if bm25_hits == 0 else "PASS" if t2 else "FAIL"
+    )
 
     lines = [
         "# ctx-semantic recall report — BM25 vs hybrid (top-5 hit)",
@@ -217,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
         (
             f"2. binding not-worse >= max(1, ceil(0.8*{bm25_hits}))"
             f" = {max(1, ceil(0.8 * bm25_hits))}: {binding_not_worse}/{bm25_hits}:"
-            f" **{'PASS' if t2 else 'FAIL'}**"
+            f" **{t2_label}**"
             f" (overall not-worse incl. both-miss ∞≤∞ rows: {not_worse}/{n})"
         ),
         (
