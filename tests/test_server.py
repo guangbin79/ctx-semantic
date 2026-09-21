@@ -263,7 +263,7 @@ def test_resync_after_ttl(tool_env: Path, monkeypatch: pytest.MonkeyPatch):
 
     server.ctx_hybrid_search(queries=["deploy"])
     assert sync_calls == [1]
-    # the cold sync embedded everything (3/3) -> hash-less backoff window;
+    # the cold sync embedded everything (3/3) -> full-reembed backoff window;
     # pin the standard interval so THIS test exercises the 300s boundary
     with server._state_lock:
         server._sync_interval[str(tool_env)] = server.RESYNC_INTERVAL_S
@@ -354,7 +354,7 @@ def test_sync_ttl_ignores_wall_clock_jumps(
     assert len(sync_calls) == 1  # monotonic age is still ~0
 
 
-def test_hashless_backoff_after_full_reembed(
+def test_full_reembed_backoff_widens_interval(
     tool_env: Path, monkeypatch: pytest.MonkeyPatch
 ):
     clock = FakeClock()
@@ -363,15 +363,15 @@ def test_hashless_backoff_after_full_reembed(
     key = str(tool_env)
 
     server.ctx_hybrid_search(queries=["deploy"])  # cold sync: embedded=3=total
-    assert server._sync_interval[key] == server.HASHLESS_RESYNC_INTERVAL_S
+    assert server._sync_interval[key] == server.FULL_REEMBED_RESYNC_INTERVAL_S
 
     clock.now += server.RESYNC_INTERVAL_S + 1  # past the STANDARD interval
     server.ctx_hybrid_search(queries=["deploy"])  # backoff holds: no sync
     assert len(sync_calls) == 1
 
-    clock.now += server.HASHLESS_RESYNC_INTERVAL_S  # past the long interval
+    clock.now += server.FULL_REEMBED_RESYNC_INTERVAL_S  # past the long one
     con = sqlite3.connect(tool_env)
-    con.execute("UPDATE sources SET content_hash='h2b' WHERE id=2")  # 2 of 3
+    con.execute("UPDATE chunks SET content = content || ' again' WHERE rowid IN (1, 2)")
     con.commit()
     con.close()
     server.ctx_hybrid_search(queries=["deploy"])  # partial sync (2 < 3)
@@ -469,7 +469,7 @@ def test_resync_boundary_age_equal_interval_is_fresh(
     key = str(tool_env)
 
     server.ctx_hybrid_search(queries=["deploy"])
-    with server._state_lock:  # pin standard interval (cold sync was hashless)
+    with server._state_lock:  # pin standard interval (cold sync re-embedded all)
         server._sync_interval[key] = server.RESYNC_INTERVAL_S
 
     clock.now += server.RESYNC_INTERVAL_S  # exactly at the boundary
@@ -489,7 +489,7 @@ def test_resync_with_zero_embedded_has_no_progress_line(
     clock = FakeClock()
     monkeypatch.setattr(server, "time", clock)
     server.ctx_hybrid_search(queries=["deploy"])  # cold sync: embedded 3
-    clock.now += server.HASHLESS_RESYNC_INTERVAL_S + 1
+    clock.now += server.FULL_REEMBED_RESYNC_INTERVAL_S + 1
     out = server.ctx_hybrid_search(queries=["deploy"])  # re-sync, embedded=0
     assert "(embedded" not in out
     assert "alpha deploy guide" in out  # results still served

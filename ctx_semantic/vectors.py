@@ -14,6 +14,7 @@ run on synthetic stubs and T6/T7 do the real wiring.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import threading
@@ -50,14 +51,10 @@ class SourceAdapter(Protocol):
 
     snapshot_chunks() must return (rowid, title, content, source_id,
     content_type, timestamp) tuples captured inside one transaction, so
-    rowids and source hashes stay mutually consistent. Chunks whose source
-    has no usable hash ('' value or no entry in source_hashes()) are
-    re-embedded on every sync — their changes are otherwise undetectable.
+    rowids and chunk text stay mutually consistent.
     """
 
     def snapshot_chunks(self) -> list[tuple[int, str, str, int, str, str | None]]: ...
-
-    def source_hashes(self) -> dict[int, str]: ...
 
     def live_rowids(self) -> set[int]: ...
 
@@ -81,6 +78,11 @@ def connect(store_path: str | os.PathLike[str] | None = None) -> sqlite3.Connect
     return con
 
 
+def _chunk_hash(title: str, content: str) -> str:
+    """Staleness key for one chunk: 16 hex chars of sha256(title\ncontent)."""
+    return hashlib.sha256(f"{title}\n{content}".encode()).hexdigest()[:16]
+
+
 def sync(
     adapter: SourceAdapter,
     embedder: Embedder,
@@ -90,16 +92,16 @@ def sync(
 ) -> dict[str, int]:
     """Incrementally bring the store in line with the source DB (read-only).
 
-    Every live chunk rowid that is missing from the store, or whose
-    source-level content_hash changed, gets embedded as ``title\\ncontent``
-    and upserted; stored rows whose rowid no longer exists in the source are
-    deleted. Sources without a usable hash ('' or absent) cannot be change-
-    detected, so their chunks re-embed on EVERY sync. Returns
-    {"embedded", "removed", "total"} — total counted back
+    Staleness is CHUNK-level: each row's content_hash is the sha256 of
+    its own ``title\\ncontent`` computed at embed time, so exactly the
+    chunks whose text or title changed (plus missing rowids) re-embed —
+    hash-less sources included, because source hashes are never consulted.
+    Stored rows whose rowid no longer exists in the source are deleted.
+    Returns {"embedded", "removed", "total"} — total counted back
     from the store, not accumulated arithmetically.
 
-    Known granularity: content_hash lives on the sources table, so one
-    changed file re-embeds ALL chunks of that source — coarse but safe.
+    Migration: rows written before chunk-level hashing hold SOURCE-level
+    hashes, so the first sync after upgrading re-embeds each DB once.
 
     Concurrent syncs for the same (store, db_path) serialize on a process-
     local lock: the second caller waits, then finds nothing left to embed,
@@ -112,7 +114,6 @@ def sync(
     src_key = str(db_path)
     with _sync_lock((str(store), src_key)):
         chunks = adapter.snapshot_chunks()
-        hashes = adapter.source_hashes()
         live = {row[0] for row in chunks}
         con = connect(store)
         try:
@@ -124,16 +125,16 @@ def sync(
                 ).fetchall()
             )
             todo = [
-                (rid, title, content, hashes.get(sid, ""))
-                for rid, title, content, sid, _ct, _ts in chunks
-                if not hashes.get(sid, "") or stored.get(rid) != hashes[sid]
+                (rid, title, content, _chunk_hash(title, content))
+                for rid, title, content, _sid, _ct, _ts in chunks
+                if stored.get(rid) != _chunk_hash(title, content)
             ]
             stale = [rid for rid in stored if rid not in live]
             embedded = 0
             if todo:
                 texts = [f"{title}\n{content}" for _, title, content, _ in todo]
                 # generator-friendly: insert as vectors stream out of embed()
-                for (rid, _ti, _co, src_hash), vec in zip(
+                for (rid, _ti, _co, chash), vec in zip(
                     todo, embedder(texts), strict=True
                 ):
                     v = np.asarray(vec, dtype=np.float32)
@@ -145,7 +146,7 @@ def sync(
                             src_key,
                             rid,
                             model,
-                            src_hash,
+                            chash,
                             v.size,
                             v.tobytes(),
                             time.time(),

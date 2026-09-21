@@ -16,8 +16,8 @@ Per query the harness runs the exact T7 server ranking path at limit=5:
 dbadapter.bm25_search(query, 5) vs hybrid.rrf(bm25, vectors.search(qvec,
 k=20)) — the same two legs and fusion hybrid.search applies before its
 markdown rendering. Read-only on the context-mode DB; the sidecar store gets
-one idempotent vectors.sync (steady state: embedded=0; the OSMDataCompiler
-corpus is hash-less, so every sync re-embeds — see vectors.sync).
+one idempotent vectors.sync (steady state: embedded=0 — chunk-level hashes
+detect change without source hashes; see vectors.sync).
 
 Writes the report to ~/.omo/evidence/ctx-semantic/recall-report.md and exits
 0 only if all three thresholds hold: (1) hybrid top-5 hit-rate >= BM25's,

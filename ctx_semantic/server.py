@@ -33,12 +33,11 @@ mcp = MCPServer("ctx-semantic")
 
 # Re-sync a DB at most this often: keeps the vector leg live over long
 # server sessions while BM25 stays live on every query (syncs are cheap
-# in steady state — embedded=0 for hashed sources).
+# in steady state — embedded=0 when nothing changed).
 RESYNC_INTERVAL_S = 300.0
-# Hash-less corpora (every source lacks a usable content_hash) re-embed
-# the WHOLE corpus on every sync — a 5-minute TTL would burn a full
-# re-embed per interval for zero freshness gain, so back off to hourly.
-HASHLESS_RESYNC_INTERVAL_S = 3600.0
+# A sync that re-embedded EVERY stored chunk (cold start, model swap,
+# hash-format migration) is the expensive shape; widen the next interval.
+FULL_REEMBED_RESYNC_INTERVAL_S = 3600.0
 
 _embedder: Embedder | None = None
 _synced_at: dict[str, float] = {}  # key -> monotonic claim time (set at claim)
@@ -129,10 +128,10 @@ def ctx_hybrid_search(
             elapsed = time.perf_counter() - started
             if counts["embedded"] > 0:
                 synced_info = f"(embedded {counts['embedded']} chunks in {elapsed:.1f}s)"
-            # embedded == total marks the full re-embed of a hash-less corpus —
-            # the shape that repeats on EVERY sync; widen the next interval.
+            # embedded == total marks a full re-embed (every stored chunk
+            # changed at once); widen the next interval.
             interval = (
-                HASHLESS_RESYNC_INTERVAL_S
+                FULL_REEMBED_RESYNC_INTERVAL_S
                 if counts["total"] > 0 and counts["embedded"] >= counts["total"]
                 else RESYNC_INTERVAL_S
             )

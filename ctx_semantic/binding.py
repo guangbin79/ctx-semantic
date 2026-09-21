@@ -2,8 +2,8 @@
 
 hybrid.search codes against SearchAdapter (bm25_search / filtered_rowids /
 get_many + db_path); vectors.sync/search code against SourceAdapter
-(snapshot_chunks / source_hashes / live_rowids). BoundAdapter satisfies BOTH
-duck-typed protocols over one read-only connection, so the server and the
+(snapshot_chunks / live_rowids — chunk-level hashes made source_hashes
+unused there). BoundAdapter satisfies BOTH
 warmup CLI wire the same object into the whole pipeline.
 
 Filters genuinely restrict BOTH legs: dbadapter.bm25_search applies them

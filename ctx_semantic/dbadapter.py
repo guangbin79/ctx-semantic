@@ -282,7 +282,7 @@ def live_rowids(con: sqlite3.Connection) -> set[int]:
 
 
 def source_hashes(con: sqlite3.Connection) -> dict[int, str]:
-    """sources.id -> content_hash ('' when NULL) for embed change detection."""
+    """sources.id -> content_hash ('' when NULL); a raw source-hash view."""
     return dict(
         _with_retry(
             lambda: con.execute(

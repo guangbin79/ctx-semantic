@@ -109,24 +109,32 @@ def test_fresh_sync_then_search_top1(tmp_path):
     assert got[0][1] == pytest.approx(1.0, abs=1e-5)
 
 
-def test_hash_bump_reembeds_whole_source(tmp_path):
+def test_changed_chunk_reembeds_only_that_chunk(tmp_path):
     path, con, _ = make_source(tmp_path, 2, 3)
     store, emb = tmp_path / "v.db", HashEmbedder()
     assert sync(StubAdapter(con), emb, path, store_path=store)["embedded"] == 6
-    con.execute("UPDATE sources SET content_hash='hash-v2-1' WHERE id=1")
+    con.execute("UPDATE chunks SET content='brand new body' WHERE rowid=2")
     con.commit()
     r = sync(StubAdapter(con), emb, path, store_path=store)
-    assert r["embedded"] == 3 and r["removed"] == 0
-    vc = connect(store)
-    assert vc.execute(
-        "SELECT count(*) FROM embeddings WHERE content_hash='hash-v2-1'"
-    ).fetchone()[0] == 3
-    assert vc.execute(
-        "SELECT count(*) FROM embeddings WHERE content_hash='hash-v1-2'"
-    ).fetchone()[0] == 3
-    # misleading-success guard: counts vs actual store rows, not trusted
-    assert vc.execute("SELECT count(*) FROM embeddings").fetchone()[0] == r["total"]
+    assert r == {"embedded": 1, "removed": 0, "total": 6}
+    assert sync(StubAdapter(con), emb, path, store_path=store)["embedded"] == 0
+    # the changed chunk's NEW vector actually serves its new text
+    rid, title, content = con.execute(
+        "SELECT rowid, title, content FROM chunks WHERE rowid=2"
+    ).fetchone()
+    q = emb([f"{title}\n{content}"])[0]
+    assert search(connect(store), StubAdapter(con), path, q, 1)[0][0] == rid
 
+
+def test_source_hash_change_no_longer_reembeds(tmp_path):
+    # staleness is chunk-level now: the sources-table hash is decoupled
+    path, con, _ = make_source(tmp_path, 2, 3)
+    store = tmp_path / "v.db"
+    sync(StubAdapter(con), HashEmbedder(), path, store_path=store)
+    con.execute("UPDATE sources SET content_hash='hash-v2-1' WHERE id=1")
+    con.commit()
+    r = sync(StubAdapter(con), HashEmbedder(), path, store_path=store)
+    assert r == {"embedded": 0, "removed": 0, "total": 6}
 
 def test_deletion_reclaims_store_rows(tmp_path):
     path, con, _ = make_source(tmp_path, 1, 4)
@@ -143,22 +151,39 @@ def test_deletion_reclaims_store_rows(tmp_path):
     ).fetchone()[0] == 0
 
 
-def test_hashless_source_reembeds_every_sync(tmp_path):
-    # OCR #6 (branch taken: the live corpus has hash-less sources): a ''
-    # hash means change detection is impossible, so those chunks re-embed
-    # on EVERY sync; a real hash restores incremental behavior.
+def test_hashless_source_zero_changes_embeds_nothing_on_resync(tmp_path):
+    # THE headline: hash-less sources (context-mode 1.0.169 writes no
+    # source hashes) are fully change-detected via chunk hashes — a second
+    # sync with zero edits embeds nothing, and an edit re-embeds exactly it.
     path, con, _ = make_source(tmp_path, 1, 2)
     con.execute("UPDATE sources SET content_hash='' WHERE id=1")
     con.commit()
     store, emb = tmp_path / "v.db", HashEmbedder()
     assert sync(StubAdapter(con), emb, path, store_path=store)["embedded"] == 2
-    assert sync(StubAdapter(con), emb, path, store_path=store)["embedded"] == 2
-    con.execute("UPDATE sources SET content_hash='h1' WHERE id=1")
-    con.commit()
-    bumped = sync(StubAdapter(con), emb, path, store_path=store)
-    assert bumped["embedded"] == 2  # '' -> 'h1' is a detected change
     assert sync(StubAdapter(con), emb, path, store_path=store) == {
         "embedded": 0, "removed": 0, "total": 2,
+    }
+    con.execute("UPDATE chunks SET title='renamed title' WHERE rowid=1")
+    con.commit()
+    r = sync(StubAdapter(con), emb, path, store_path=store)  # title is hashed
+    assert r == {"embedded": 1, "removed": 0, "total": 2}
+
+
+def test_legacy_source_level_hash_rows_reembed_once(tmp_path):
+    # migration: pre-upgrade rows hold source-level hashes -> stored !=
+    # computed chunk hash -> ONE full re-embed, then steady state returns
+    path, con, _ = make_source(tmp_path, 1, 3)
+    store = tmp_path / "v.db"
+    sync(StubAdapter(con), HashEmbedder(), path, store_path=store)
+    vc = connect(store)
+    vc.execute("UPDATE embeddings SET content_hash='legacy-source-hash'")
+    vc.commit()
+    vc.close()
+    assert sync(StubAdapter(con), HashEmbedder(), path, store_path=store) == {
+        "embedded": 3, "removed": 0, "total": 3,
+    }
+    assert sync(StubAdapter(con), HashEmbedder(), path, store_path=store) == {
+        "embedded": 0, "removed": 0, "total": 3,
     }
 
 
