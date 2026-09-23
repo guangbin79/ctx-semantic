@@ -36,3 +36,4 @@
 <!-- Gaps that future work should address -->
 - README 引用 `docs/evidence` 但该目录未入库（find 无结果）——证据文档缺失，是否补齐？
 - v2 序列老化：中文召回质量若不足，候选替代模型是什么（须同时满足 Apache 系 + fastembed 收录）？
+- 2026-09-23 评估 WeMM-Embedding：多模态 2B VLM，四维仅许可证过关，排除——见 [wemm-embedding-evaluation](../archives/wemm-embedding-evaluation.md)
