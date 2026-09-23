@@ -7,3 +7,7 @@
 ## [2026-09-21] query | Archived: embedding-model-selection
 - 归档「为何不用 bge-m3 / jina-v3」的对比结论（含 HF API 许可证实查）
 - Types: Archive
+
+## [2026-09-23] query | Archived: wemm-embedding-evaluation
+- 评估 Tencent WeMM-Embedding 替换 jina-v2-base-zh：多模态 2B VLM，四维仅许可证（Apache-2.0）过关，不换
+- Types: Archive
