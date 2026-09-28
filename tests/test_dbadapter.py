@@ -395,12 +395,18 @@ def test_real_db_readonly_open_and_match():
         pytest.skip(f"real content DB not present: {db}")
     c = open_db(db)
     try:
+        # open_db must open the REAL db read-only, not a fixture.
+        assert c.execute("PRAGMA query_only").fetchone()[0] == 1
         n = len(dbadapter.list_chunks(c))
         assert n > 0, "real DB unexpectedly empty"
-        hits = dbadapter.bm25_search(c, "laya", 5)
+        # 'laya' drifted out of the live corpus when the content DB was
+        # re-indexed; 'embedding' verified present by a read-only FTS probe
+        # against the current DB (400 chunks, 2026-09-28). Re-pick via the
+        # same probe if the corpus drifts again.
+        hits = dbadapter.bm25_search(c, "embedding", 5)
         # a live DB with zero hits would silently skip the loop below and
         # mask the match/get_many roundtrip — require the path to run.
-        assert hits, "real DB present but 'laya' matches nothing"
+        assert hits, "real DB present but 'embedding' matches nothing"
         for rowid, _score in hits:
             got = dbadapter.get_many(c, [rowid])
             assert rowid in got and got[rowid][0]  # rowid + non-empty title
