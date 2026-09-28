@@ -4,14 +4,23 @@ version = "0.1.0"
 description = "Hybrid semantic recall sidecar for the context-mode knowledge base"
 requires-python = ">=3.10"
 dependencies = [
-    # fastembed[gpu] extra was removed upstream in 0.8.0; fastembed-gpu is the
-    # official GPU distribution (same `fastembed` module, onnxruntime-gpu backend)
-    "fastembed-gpu",
+    # CUDA (cu124) prebuilt wheel. Pinned by path+sha256 in [tool.uv.sources]:
+    # a plain version pin (or [[tool.uv.index]] to abetlen's cu124 index,
+    # https://abetlen.github.io/llama-cpp-python/whl/cu124) resolves to the
+    # same wheel, but uv cannot range-read GitHub release assets and would
+    # stream the whole 1.7GB wheel single-stream on this host's pipe.
+    # scripts/uv-sync.sh materializes the wheel (16-way ranged fetch,
+    # sha256-verified against both the script constant and uv.lock) and
+    # repairs the wheel's Zen4-built CPU kernels — see that script's header.
+    "llama-cpp-python==0.3.35",
     "mcp",
     "numpy",
-    # onnxruntime-gpu ships CUDA libs as optional extras and uv cannot enable
-    # extras on a transitive dependency, so request them directly
-    "onnxruntime-gpu[cuda,cudnn]<1.24",
+    # libggml-cuda.so dlopens libcudart + libcublas/libcublasLt from these
+    # wheels at runtime (ldd, spike-qwen3-llama-cpp phase 7; run.sh exports
+    # their lib dirs). Previously transitive via onnxruntime-gpu[cuda,cudnn];
+    # now explicit. nvidia-cuda-nvrtc-cu12 arrives transitively with cublas.
+    "nvidia-cuda-runtime-cu12",
+    "nvidia-cublas-cu12",
 ]
 
 [dependency-groups]
@@ -27,6 +36,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ctx_semantic"]
+
+[tool.uv.sources]
+# Local copy of the abetlen cu124 wheel (URL + sha256 inside
+# scripts/uv-sync.sh, which must be kept in sync with this pin on bumps).
+# Single-host project, same convention as embedder.py's absolute GGUF path.
+llama-cpp-python = { path = "/home/guangbin/ctx-semantic/models/wheels/llama_cpp_python-0.3.35-py3-none-manylinux_2_35_x86_64.whl" }
 
 [tool.pytest.ini_options]
 markers = [
