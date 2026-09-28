@@ -246,7 +246,7 @@ def test_main_all_pass_writes_report_and_exits_zero(
     assert code == 0
     out = capsys.readouterr().out
     assert "thresholds: ALL PASS" in out
-    assert out.count("[zh]") == 8 and out.count("[en]") == 4  # per-row prints
+    assert out.count("[zh]") == 6 and out.count("[en]") == 4 and out.count("[mixed]") == 2  # per-row prints
     assert len(adapter.bm25_calls) == len(harness.CASES)
     assert all(limit == harness.TOP_K for _q, limit in adapter.bm25_calls)
     assert con.closed
@@ -288,4 +288,4 @@ def test_main_no_rescues_fails_t3_exits_one(monkeypatch, tmp_path, capsys):
     assert harness.main(["--db", str(tmp_path / "corpus.db")]) == 1
     out = capsys.readouterr().out
     assert "thresholds: FAIL" in out
-    assert "bm25_hits=14 hybrid_hits=14 not_worse=14/14 rescues=0" in out
+    assert "bm25_hits=12 hybrid_hits=12 not_worse=12/12 rescues=0" in out
