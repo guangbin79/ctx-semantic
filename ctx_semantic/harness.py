@@ -8,9 +8,10 @@ the BM25 leg non-empty so RRF fusion is genuinely exercised). A hit means
 the gold chunk's ROWID appears in the top-5 — chunk identity, never title
 substrings.
 
-Corpus: resampled 2026-09-21 from the OSMDataCompiler content DB
-(53883986ad0936d4, 659 chunks) via ``--db`` — the original home-project
-corpus was purged by the context-mode 1.0.169 upgrade.
+Corpus: resampled 2026-09-28 from the live ctx-semantic-migration content
+DB (0ef2d5f23b410348, 400 chunks) via ``--db`` — the 2026-09-21 corpus
+(53883986ad0936d4) was purged by a context-mode upgrade; the old baseline
+report lives on as recall-report-jina-baseline-2026-09-21-orphaned.md.
 
 Per query the harness runs the exact T7 server ranking path at limit=5:
 dbadapter.bm25_search(query, 5) vs hybrid.rrf(bm25, vectors.search(qvec,
@@ -51,42 +52,40 @@ TOP_K = 5  # hit window — mirrors the server tool's limit
 VEC_K = 20  # max(4*TOP_K, 20) — hybrid.search's vector-leg width
 REPORT_PATH = Path.home() / ".omo" / "evidence" / "ctx-semantic" / "recall-report.md"
 
-# (query, lang, gold_rowid, gold_title) — paraphrases authored 2026-09-21
-# from a read-only sample of the OSMDataCompiler DB (53883986ad0936d4).
+# (query, lang, gold_rowid, gold_title) — paraphrases authored 2026-09-28
+# from a read-only sample of the live content DB (0ef2d5f23b410348).
 # gold_title guards rowid drift: the harness aborts (exit 2) if the rowid
 # no longer holds the recorded chunk.
 CASES: list[tuple[str, str, int, str]] = [
     # --- zh: pure-CJK paraphrases of English chunks (zero lexical overlap) ---
-    ("一个目录里最多允许存放多少个瓦片文件", "zh", 867, "Lines 73-92"),
-    ("整数值超出三十二位范围时字段值会改用哪个更宽的类型", "zh", 890,
-     "sValue.eType = (nVal >= INT_MIN && nVal <= INT_MAX)"),
-    ("解码线串几何时先跳过移动命令的变元再读坐标增量", "zh", 916,
-     "poMultiPoint->addGeometryDirectly(poPoint);"),
-    ("解析协议缓冲出错时打印调试日志然后直接返回失败", "zh", 982,
-     'CPLDebug("MVT", "Protobuf error: line %d",'),
-    ("往临时表写瓦片时把行列号序号和二进制块绑定到插入语句", "zh", 1102,
-     "sqlite3_bind_int(m_hInsertStmt, 2, nTileX);"),
-    ("瓦片压缩后仍超出大小上限就逐级把范围值减半", "zh", 1141,
-     "size_t nSizeBefore = oTileBuffer.size();"),
-    ("从临时数据库按层级和行列顺序读出全部瓦片组装输出", "zh", 1152,
-     "std::map<CPLString, MVTLayerProperties> oMapLayerProps;"),
-    ("驱动元数据里声明支持哪几种查询方言", "zh", 1212, '"Boolean Float32");'),
+    ("这个文本嵌入模型支持上百种语言，参数量只有六亿，最长能处理三万二的输入序列", "zh", 28,
+     "[](#qwen3-embedding-06b-gguf)Qwen3-Embedding-0.6B-GGUF > [](#model-overview)Model Overview"),
+    ("为什么建议在查询侧添加任务说明，不加会造成多大程度的检索效果下降", "zh", 30,
+     "[](#qwen3-embedding-06b-gguf)Qwen3-Embedding-0.6B-GGUF > [](#usage)Usage"),
+    ("预编译的显卡加速安装包对显卡计算能力和解释器版本有哪些前提要求", "zh", 88,
+     "Lines 127-146"),
+    ("这个模型是从哪个基座微调出来的又衍生出多少适配器和量化版本", "zh", 56,
+     "[](#qwen3-embedding-06b)Qwen3-Embedding-0.6B > Model tree for Qwen/Qwen3-Embedding-0.6B[](/docs/hub/model-cards#specifying-a-base-model)"),
+    ("苹果自研芯片的机器上为什么要确认装了对应架构的解释器", "zh", 96,
+     "Note: If you are using Apple Silicon (M1) Mac, make sure you have installed a ve"),
+    ("源码编译时打开英伟达加速的编译开关该怎么写", "zh", 87,
+     "Lines 109-128"),
     # --- en: lexical overlap present — BM25 leg non-empty, RRF fused ---
     # (FTS5 MATCH is an implicit AND of all tokens, so these are authored
     #  with tokens that co-occur in the gold chunk.)
-    ("ferry 1.1px step", "en", 809,
-     "Map Styles > Strategies > Ferry 缩放线宽 (2026-05-27)"),
-    ("tunnel transit railway", "en", 828,
-     "Map Styles > Bug Experience > tunnel-transit 被道路遮挡 (2026-06-02)"),
-    ("131 road classes day json", "en", 779,
-     "Map Styles > Decisions > 完整道路层级 50→131 层 (2026-04-16)"),
-    ("nproc CPU_CORES DEFAULT_THREADS", "en", 1311,
-     "自动检测 CPU 核心数，默认使用一半核心防止系统过载"),
+    ("cu121 extra-index-url wheel", "en", 89,
+     "- `cu132`: CUDA 13.2"),
+    ("chatml llama-2 gemma chat formats", "en", 101,
+     "Lines 361-380"),
+    ("windows visual studio mingw xcode gcc", "en", 83,
+     "- Linux: gcc or clang"),
+    ("installed fastembed version", "en", 62,
+     "installed fastembed version"),
     # --- mixed zh+en: single Latin token keeps BM25 matching, vector carries semantics ---
-    ("ogr2ogr 不修改任何输入", "mixed", 838,
-     "total 83796 chars"),
-    ("business anchor 方案", "mixed", 797,
-     "Map Styles > Decisions > business anchor v2 实施 (2026-08-07)"),
+    ("skill-up workspace 污染", "mixed", 211,
+     "skill-up 评测 workspace 污染 opencode 技能注册表 > Usage Pattern"),
+    ("agent 资产清单 部署", "mixed", 215,
+     "dotfiles agent 资产清单 v2：自建入 git + 第三方安装清单"),
 ]
 
 
