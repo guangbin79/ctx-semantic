@@ -8,13 +8,12 @@ does not stall. T8 registers the server only after `warmup` has pre-embedded,
 so the steady-state first query is model load + a zero-work incremental sync.
 
 stdio purity: stdout carries ONLY MCP protocol bytes. The model stack's
-chatter (tqdm, warnings, onnxruntime) writes to stderr by default; this
-module never prints. Hub env hygiene (mirror + xet off + proxies off) is
-applied at ctx_semantic.embedder import time, before fastembed loads.
+chatter (llama.cpp logs, tqdm, warnings) writes to stderr by default; this
+module never prints.
 
 project_path is the documented override of the cwd/$OPENCODE_PROJECT_DIR
 default; $CTX_SEMANTIC_DB still wins over everything (projhash contract).
-Run via ../run.sh (LD_LIBRARY_PATH for the CUDA EP) or:
+Run via ../run.sh (LD_LIBRARY_PATH for the nvidia CUDA libs) or:
     uv run python -m ctx_semantic.server
 """
 
@@ -85,7 +84,7 @@ def ctx_hybrid_search(
 
     Searches the indexed session/decision markdown of the CURRENT project
     (mixed Chinese/English) with reciprocal-rank fusion of an FTS5 BM25 leg
-    and a jina-v2-base-zh vector leg. Each query gets its own
+    and a qwen3-embedding-0.6b vector leg. Each query gets its own
     '### 查询 N：<query>' section of ctx_search-style blocks; a chunk hit by
     several queries appears exactly once.
 

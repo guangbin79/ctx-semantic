@@ -11,7 +11,7 @@ substrings.
 Corpus: resampled 2026-09-28 from the live ctx-semantic-migration content
 DB (0ef2d5f23b410348, 400 chunks) via ``--db`` — the 2026-09-21 corpus
 (53883986ad0936d4) was purged by a context-mode upgrade; the old baseline
-report lives on as recall-report-jina-baseline-2026-09-21-orphaned.md.
+report lives on orphaned in the same evidence dir (2026-09-21 baseline).
 
 Per query the harness runs the exact T7 server ranking path at limit=5:
 dbadapter.bm25_search(query, 5) vs hybrid.rrf(bm25, vectors.search(qvec,
@@ -44,7 +44,7 @@ from typing import NamedTuple
 
 from ctx_semantic import dbadapter, hybrid, projhash, vectors
 from ctx_semantic.binding import BoundAdapter
-from ctx_semantic.embedder import Embedder
+from ctx_semantic.embedder import MODEL_NAME, Embedder
 
 PROJECT = Path.home()  # default corpus anchor (projhash resolve_db)
 
@@ -213,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         (
             f"- sync before run: embedded={counts['embedded']} removed={counts['removed']}"
-            f" total={counts['total']}  model=jina-v2-base-zh device={embedder.device}"
+            f" total={counts['total']}  model={MODEL_NAME} device={embedder.device}"
         ),
         (
             "- ranking path = T7 server pipeline at limit=5:"

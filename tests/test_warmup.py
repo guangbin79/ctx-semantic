@@ -165,7 +165,7 @@ def test_main_db_relative_path_resolved_absolute(
     assert calls[0][2] == resolved
     assert calls[0][2].is_absolute()
     out = capsys.readouterr().out
-    assert "model=jinaai/jina-embeddings-v2-base-zh device=stub-device" in out
+    assert "model=qwen/qwen3-embedding-0.6b-gguf-q8 device=stub-device" in out
     assert StubEmbedder.built == 1
 
 

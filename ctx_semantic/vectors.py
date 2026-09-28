@@ -7,7 +7,7 @@ read-only. Deleting the store file is always a safe full rebuild (sync()
 recreates it from scratch).
 
 T3 (adapter) and T4 (embedder) land in parallel; this module codes only
-against the narrow SourceAdapter protocol plus a fastembed-shaped embedder
+against the narrow SourceAdapter protocol plus a duck-typed embedder
 callable (``embed(texts: list[str]) -> iterable of 1-D vectors``), so tests
 run on synthetic stubs and T6/T7 do the real wiring.
 """
@@ -25,7 +25,8 @@ from typing import Protocol
 
 import numpy as np
 
-DEFAULT_MODEL = "jinaai/jina-embeddings-v2-base-zh"
+from .embedder import MODEL_NAME as DEFAULT_MODEL
+
 DEFAULT_STORE = Path.home() / "ctx-semantic" / "data" / "vectors.db"
 
 _DDL = """

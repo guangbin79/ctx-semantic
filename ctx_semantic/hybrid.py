@@ -17,7 +17,7 @@ Injected dependencies, both duck-typed via the Protocols below:
   tests stub it. It owns FTS5 query escaping (hybrid passes query text
   through untouched) and owns the source/content_type filters, which must
   reach BOTH legs: the BM25 WHERE-side and the vector candidate set.
-- ``embedder`` — ``embed_query(text) -> 1-D vector``; the real jina loader
+- ``embedder`` — ``embed_query(text) -> 1-D vector``; the real llama.cpp loader
   (ctx_semantic.embedder.Embedder) fits, tests use synthetic stubs and never
   load the model.
 
@@ -71,7 +71,8 @@ class SearchAdapter(Protocol):
 
 
 class QueryEmbedder(Protocol):
-    """Query-side embedding: raw text in (no instruction prefix), vector out."""
+    """Query-side embedding: raw text in (the embedder applies the Instruct
+    prefix internally), vector out."""
 
     def embed_query(self, text: str) -> np.ndarray: ...
 
