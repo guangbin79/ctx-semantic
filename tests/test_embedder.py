@@ -1,18 +1,20 @@
-"""Tests for ctx_semantic.embedder (T2: llama.cpp backend, fakes level).
+"""Tests for ctx_semantic.embedder (T2 fakes + T4 real-model contract).
 
-The jina-era real-model tests were removed with the backend swap and return
-in T4 (they need llama_cpp in the lock, which lands in T5); nothing in this
-file may trigger a real model load. GPU usage inside Embedder is verified
-via nvidia-smi PID lookup, not device claims (the silent-fallback trap).
-
-Device-fallback paths (VRAM check falsy, OOM rebuild, CPU re-raise,
-nvidia-smi parsing) run on fakes so they are deterministic on any host.
+Real-model tests (module-scoped fixture, one lazy load) pin the qwen3 GGUF
+contract: DIM=1024, device=cuda backed by nvidia-smi PID VRAM proof,
+bilingual cosine sanity, query-prefix wiring, and n_ctx truncation. Device-
+fallback paths (VRAM check falsy, OOM rebuild, CPU re-raise, nvidia-smi
+parsing) run on fakes so they are deterministic on any host. GPU usage is
+verified via nvidia-smi PID lookup, not device claims (the silent-fallback
+trap).
 """
 
 from __future__ import annotations
 
+import glob
 import logging
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -208,3 +210,92 @@ def test_pid_vram_on_gpu_table(monkeypatch, which, run_raises, stdout, expected)
 
     monkeypatch.setattr(embedder_mod.subprocess, "run", fake_run)
     assert embedder_mod._pid_vram_on_gpu(os.getpid()) == expected
+
+
+# --- real-model contract tests (T4; llama_cpp pinned in the lock since T5) -----
+
+
+@pytest.fixture(scope="module")
+def embedder() -> Embedder:
+    e = Embedder(cache_dir=CACHE_DIR)
+    e.embed_query("warmup")  # lazy load once for the whole module
+    return e
+
+
+def test_dim_is_1024(embedder: Embedder):
+    assert DIM == 1024
+    v = embedder.embed_query("维度检查")
+    assert v.shape == (1024,)
+
+
+def test_device_cuda_pid(embedder: Embedder):
+    # "cuda" is only reported after _ensure_loaded's nvidia-smi PID check
+    # passed; this re-verifies VRAM is still held by THIS pid. Hermeticity
+    # (jina-era sys.prefix convention, adapted): llama-cpp dlopens libcudart/
+    # libcublas from nvidia wheel dirs under sys.prefix — without them CUDA
+    # is genuinely unloadable and the Embedder legitimately lands on cpu
+    # (that degradation is covered by the fakes fallback tests above).
+    if embedder_mod.shutil.which("nvidia-smi") is None:
+        pytest.skip("no nvidia-smi on PATH — GPU presence cannot be verified")
+    pattern = str(Path(sys.prefix) / "lib" / "**" / "nvidia" / "*" / "lib")
+    if not glob.glob(pattern, recursive=True):
+        pytest.skip(
+            "CUDA wheel libs unavailable under sys.prefix — degradation is "
+            "caught by embedder fallback tests"
+        )
+    assert embedder.device == "cuda", f"device reported: {embedder.device}"
+    vram = embedder_mod._pid_vram_on_gpu(os.getpid())
+    assert vram is not None, "device=cuda but nvidia-smi shows no VRAM for this pid"
+    if vram != "unknown":  # row exists but no memory column
+        assert float(vram.split()[0]) > 0, f"VRAM reported as {vram}"
+
+
+def test_bilingual_cosine_sanity(embedder: Embedder):
+    # qwen3-embedding-0.6b is zh/en bilingual: each query must match its
+    # related doc far better than an unrelated concept — zh, en, and the
+    # zh-query→en-doc cross-lingual pair. Margin 0.2: measured gaps ~0.54
+    # (2026-09-28), robust to determinism noise, not a knife-edge.
+    related_doc = embedder.embed_batch(
+        ["model routing\nDistribute requests across models based on load"]
+    )[0]
+    zh_doc = embedder.embed_batch(["模型路由与分流策略\n根据负载将请求分发到不同模型"])[0]
+    unrelated = embedder.embed_batch(["晚餐食谱\n今日晚餐菜单与采购清单"])[0]
+    pairs = {
+        "zh→zh": (embedder.embed_query("模型路由"), zh_doc),
+        "zh→en": (embedder.embed_query("模型路由"), related_doc),
+        "en→en": (embedder.embed_query("model routing"), related_doc),
+    }
+    for name, (q, pos) in pairs.items():
+        cos_pos = float(np.dot(q, pos))
+        cos_neg = float(np.dot(q, unrelated))
+        assert cos_pos > cos_neg, f"{name}: {cos_pos=} !> {cos_neg=}"
+        assert cos_pos - cos_neg > 0.2, f"{name}: gap {cos_pos - cos_neg:.4f} too small"
+
+
+def test_query_prefix_applied_and_effective(embedder: Embedder):
+    # embed_query(t) must be the IDENTICAL computation to embedding the
+    # preformatted string (cos >= 0.99999 after float32 normalization), and
+    # the prefix must actually change the vector vs the raw text
+    # (cos < 0.999; measured 0.840) — proves _format_query is wired AND
+    # load-bearing, not a decorative call.
+    for t in ("怎么排查内存泄漏", "how to debug a memory leak"):
+        q = embedder.embed_query(t)
+        pre = embedder.embed_batch([embedder_mod._format_query(t)])[0]
+        raw = embedder.embed_batch([t])[0]
+        cos_same = float(np.dot(q, pre))
+        cos_raw = float(np.dot(q, raw))
+        assert cos_same >= 0.99999, f"{t!r}: {cos_same=}"
+        assert cos_raw < 0.999, f"{t!r}: prefix changed nothing ({cos_raw=})"
+
+
+def test_long_text_beyond_n_ctx_truncates_not_raises(embedder: Embedder):
+    # ~9.6k tokens > N_CTX (8192): llama.cpp truncates the input at n_ctx
+    # instead of raising; the output stays a normalized 1024-dim vector.
+    # Corpus p99 is 2146 tokens — only extreme outliers ever hit this path.
+    para = (
+        "The quick brown fox jumps over the lazy dog. "
+        "这是一段用于测试长文本截断行为的混合语言段落，包含中英文内容。"
+    ) * 300
+    v = embedder.embed_batch([para])[0]
+    assert v.shape == (DIM,)
+    assert abs(float(np.linalg.norm(v)) - 1.0) < 1e-5
