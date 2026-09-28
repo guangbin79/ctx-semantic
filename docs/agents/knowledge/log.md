@@ -11,3 +11,7 @@
 ## [2026-09-23] query | Archived: wemm-embedding-evaluation
 - 评估 Tencent WeMM-Embedding 替换 jina-v2-base-zh：多模态 2B VLM，四维仅许可证（Apache-2.0）过关，不换
 - Types: Archive
+
+## [2026-09-28] ingest | embedding-model
+- 嵌入模型迁移 jina-v2-base-zh → qwen/qwen3-embedding-0.6b-gguf-q8（llama-cpp-python CUDA）：同库同 CASES 重生基线 A/B hybrid 8/12→10/12、rescues 2→4、三门禁双 PASS；fastembed 0.7.4/0.8.1 实测无 Qwen，留守路线不通
+- Types: Decision, Archive

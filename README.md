@@ -4,9 +4,9 @@ Hybrid semantic recall sidecar for the context-mode knowledge base.
 
 context-mode already stores session knowledge (decisions, errors, plans, notes)
 in SQLite with FTS5 full-text search. This sidecar adds a semantic layer:
-documents are embedded with fastembed (jinaai/jina-embeddings-v2-base-zh,
-dim 768, mixed Chinese-English — see docs/evidence; bge-m3 is not in
-fastembed's supported list), vectors are kept alongside the FTS5 store, and
+documents are embedded with llama-cpp-python (Qwen3-Embedding-0.6B GGUF
+Q8_0, dim 1024, CUDA — see docs/agents/knowledge), vectors are kept
+alongside the FTS5 store, and
 an MCP server (python `mcp` SDK) exposes hybrid recall — exact keyword match
 merged with dense nearest-neighbor — to coding agents. It runs as a plain
 subprocess (`run.sh`), no daemon.
@@ -15,7 +15,7 @@ subprocess (`run.sh`), no daemon.
 
 ```sh
 cd ~/ctx-semantic
-uv sync --locked          # create .venv from uv.lock
+./scripts/uv-sync.sh       # uv sync + llama-cpp wheel fetch + host CPU-lib repair
 ```
 
 Entry point: `./run.sh` (executes `python -m ctx_semantic.server` inside the
@@ -27,15 +27,16 @@ uv environment).
 # FTS5 available in the venv
 uv run python -c "import sqlite3; con=sqlite3.connect(':memory:'); con.execute('CREATE VIRTUAL TABLE t USING fts5(x)')"
 
-# embedding model loads and embeds (add LD_LIBRARY_PATH for GPU)
+# llama-cpp-python pinned version
+uv run python -c "import llama_cpp; print(llama_cpp.__version__)"
+
+# embedding model loads and embeds on GPU (nvidia wheel libs on LD_LIBRARY_PATH)
 LD_LIBRARY_PATH="$(find .venv/lib -type d -name lib -path '*nvidia/*' | tr '\n' ':')" \
 uv run python -c "
-from fastembed import TextEmbedding
-m = TextEmbedding('jinaai/jina-embeddings-v2-base-zh', cache_dir='models', providers=['CUDAExecutionProvider'])
-print(next(iter(m.embed(['ping', 'pong']))).shape)
+from ctx_semantic.embedder import Embedder, MODEL_NAME
+e = Embedder(); e.embed_query('probe')
+print(MODEL_NAME, e.device)
 "
-# onnxruntime execution providers (GPU vs CPU)
-uv run python -c "import onnxruntime; print(onnxruntime.get_available_providers())"
 ```
 
 ## Environment notes
