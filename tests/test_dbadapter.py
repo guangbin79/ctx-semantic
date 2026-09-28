@@ -399,11 +399,17 @@ def test_real_db_readonly_open_and_match():
         assert c.execute("PRAGMA query_only").fetchone()[0] == 1
         n = len(dbadapter.list_chunks(c))
         assert n > 0, "real DB unexpectedly empty"
-        # 'laya' drifted out of the live corpus when the content DB was
-        # re-indexed; 'embedding' verified present by a read-only FTS probe
-        # against the current DB (400 chunks, 2026-09-28). Re-pick via the
-        # same probe if the corpus drifts again.
-        hits = dbadapter.bm25_search(c, "embedding", 5)
+        # Probe tokens drift out as the live corpus is re-indexed: 'laya'
+        # vanished in an earlier re-index, 'embedding' (5 hits in the
+        # 400-chunk corpus, 2026-09-28) vanished when it was replaced by the
+        # current 120-chunk corpus. 'git' verified by a read-only FTS probe
+        # (5 hits, roundtrip ok, 2026-09-28):
+        #   uv run python -c "from ctx_semantic import projhash, dbadapter;
+        #     db = projhash.db_path(projhash.resolve('/home/guangbin'));
+        #     c = dbadapter.open_db(db);
+        #     print(len(dbadapter.bm25_search(c, 'git', 5)))"  # -> 5
+        # Re-pick via the same probe if the corpus drifts again.
+        hits = dbadapter.bm25_search(c, "git", 5)
         # a live DB with zero hits would silently skip the loop below and
         # mask the match/get_many roundtrip — require the path to run.
         assert hits, "real DB present but 'embedding' matches nothing"
