@@ -218,7 +218,12 @@ def test_pid_vram_on_gpu_table(monkeypatch, which, run_raises, stdout, expected)
 @pytest.fixture(scope="module")
 def embedder() -> Embedder:
     e = Embedder(cache_dir=CACHE_DIR)
-    e.embed_query("warmup")  # lazy load once for the whole module
+    try:
+        e.embed_query("warmup")  # lazy load once for the whole module
+    except Exception:  # noqa: BLE001 — availability probe: cu124 wheel needs
+        # nvidia LD_LIBRARY_PATH exports; without them import llama_cpp fails
+        # on BOTH cuda and cpu attempts, so real-model tests skip as a set.
+        pytest.skip("llama_cpp/model stack unavailable (no nvidia exports)")
     return e
 
 

@@ -109,8 +109,8 @@ class Embedder:
         return self._device
 
     def _new_model(self, use_gpu: bool):
-        # lazy: absent from the lock until T5 — a top-level import would
-        # ImportError every uv run before that todo lands.
+        # lazy: llama-cpp-python (pinned in the lock) does heavy CUDA dlopen at
+        # import — non-embed entry paths must not pay that cost.
         import llama_cpp
 
         return llama_cpp.Llama(
