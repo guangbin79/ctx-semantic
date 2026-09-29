@@ -4,17 +4,20 @@ version = "0.1.0"
 description = "Hybrid semantic recall sidecar for the context-mode knowledge base"
 requires-python = ">=3.10"
 dependencies = [
-    # CUDA (cu124) prebuilt wheel. Pinned by path+sha256 in [tool.uv.sources]:
-    # a plain version pin (or [[tool.uv.index]] to abetlen's cu124 index,
-    # https://abetlen.github.io/llama-cpp-python/whl/cu124) resolves to the
-    # same wheel, but uv cannot range-read GitHub release assets and would
-    # stream the whole 1.7GB wheel single-stream on this host's pipe.
-    # scripts/uv-sync.sh materializes the wheel (16-way ranged fetch,
-    # sha256-verified against both the script constant and uv.lock) and
-    # repairs the wheel's Zen4-built CPU kernels — see that script's header.
-    "llama-cpp-python==0.3.35",
     "mcp",
     "numpy",
+]
+
+[project.optional-dependencies]
+# Dual inference profiles (SHAPE=1; spike-uv-dual-extras.out): cpu is the
+# default profile (abetlen cpu-index wheel — no CUDA libs, imports without
+# LD_LIBRARY_PATH); cuda is opt-in via the materialized path wheel in
+# [tool.uv.sources] below.
+cpu = [
+    "llama-cpp-python==0.3.35",
+]
+cuda = [
+    "llama-cpp-python==0.3.35",
     # libggml-cuda.so dlopens libcudart + libcublas/libcublasLt from these
     # wheels at runtime (ldd, spike-qwen3-llama-cpp phase 7; run.sh exports
     # their lib dirs). Previously transitive via onnxruntime-gpu[cuda,cudnn];
@@ -40,13 +43,49 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["ctx_semantic"]
 
+[tool.uv]
+# The cpu and cuda extras are mutually exclusive: both pin
+# llama-cpp-python==0.3.35 from different sources (index wheel vs local
+# path wheel). Declaring the conflict lets uv resolve each extra
+# independently (docs: resolution > conflicting dependencies).
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cuda" },
+    ],
+]
+
 [tool.uv.sources]
-# Local copy of the abetlen cu124 wheel (URL + sha256 inside
-# scripts/uv-sync.sh, which materializes it at this repo-relative path —
-# any clone location works; keep pin, script constants, and uv.lock in
-# sync on bumps. models/ is gitignored: run scripts/uv-sync.sh BEFORE any
-# bare `uv run`, or the path source is missing.
-llama-cpp-python = { path = "models/wheels/llama_cpp_python-0.3.35-py3-none-manylinux_2_35_x86_64.whl" }
+# Per-profile sources for llama-cpp-python. Source markers must be DISJOINT
+# (uv rejects overlapping `extra ==` markers outright and prescribes the
+# `!=` guard — spike-uv-dual-extras.out 0a/0b).
+#
+# cpu arm: abetlen's cpu-only index (explicit = not consulted for any other
+# package).
+#
+# cuda arm: local copy of the abetlen cu124 wheel. A plain version pin (or
+# [[tool.uv.index]] to abetlen's cu124 index,
+# https://abetlen.github.io/llama-cpp-python/whl/cu124) resolves to the
+# same wheel, but uv cannot range-read GitHub release assets and would
+# stream the whole 1.7GB wheel single-stream on this host's pipe.
+# scripts/uv-sync.sh materializes the wheel (16-way ranged fetch,
+# sha256-verified against both the script constant and uv.lock) and
+# repairs the wheel's Zen4-built CPU kernels — see that script's header.
+# That sha256 + ranged-fetch reproducibility contract is unchanged.
+# models/ is gitignored: a fresh clone must materialize the wheel before
+# installing the cuda extra. Note: `uv lock` resolves even with the wheel
+# file absent (the lock records the path arm as a requirement mapping);
+# the missing file only surfaces at `uv sync --extra cuda` as a silent
+# skip — keep the script's materialize + sha256 gate (spike 5e).
+llama-cpp-python = [
+    { path = "models/wheels/llama_cpp_python-0.3.35-py3-none-manylinux_2_35_x86_64.whl", marker = "extra != 'cpu' and extra == 'cuda'" },
+    { index = "abetlen-cpu", marker = "extra == 'cpu'" },
+]
+
+[[tool.uv.index]]
+name = "abetlen-cpu"
+url = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+explicit = true
 
 [tool.pytest.ini_options]
 markers = [
