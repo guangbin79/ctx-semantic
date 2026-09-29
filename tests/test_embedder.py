@@ -1,7 +1,8 @@
 """Tests for ctx_semantic.embedder (T2 fakes + T4 real-model contract).
 
 Real-model tests (module-scoped fixture, one lazy load) pin the qwen3 GGUF
-contract: DIM=1024, device=cuda backed by nvidia-smi PID VRAM proof,
+contract: DIM=1024, profile-aware device (cuda backed by nvidia-smi PID
+VRAM proof on the cuda wheel profile, cpu under the cpu wheel profile),
 bilingual cosine sanity, query-prefix wiring, and n_ctx truncation. Device-
 fallback paths (VRAM check falsy, OOM rebuild, CPU re-raise, nvidia-smi
 parsing) run on fakes so they are deterministic on any host. GPU usage is
@@ -11,7 +12,6 @@ trap).
 
 from __future__ import annotations
 
-import glob
 import logging
 import os
 import sys
@@ -305,21 +305,21 @@ def test_dim_is_1024(embedder: Embedder):
     assert v.shape == (1024,)
 
 
-def test_device_cuda_pid(embedder: Embedder):
-    # "cuda" is only reported after _ensure_loaded's nvidia-smi PID check
-    # passed; this re-verifies VRAM is still held by THIS pid. Hermeticity
-    # (jina-era sys.prefix convention, adapted): llama-cpp dlopens libcudart/
-    # libcublas from nvidia wheel dirs under sys.prefix — without them CUDA
-    # is genuinely unloadable and the Embedder legitimately lands on cpu
-    # (that degradation is covered by the fakes fallback tests above).
-    if embedder_mod.shutil.which("nvidia-smi") is None:
-        pytest.skip("no nvidia-smi on PATH — GPU presence cannot be verified")
-    pattern = str(Path(sys.prefix) / "lib" / "**" / "nvidia" / "*" / "lib")
-    if not glob.glob(pattern, recursive=True):
-        pytest.skip(
-            "CUDA wheel libs unavailable under sys.prefix — degradation is "
-            "caught by embedder fallback tests"
-        )
+def test_device_matches_profile(embedder: Embedder):
+    # Profile-aware device assertion (dual-profile protocol): the installed
+    # wheel profile decides the expected device. All three nvidia-wheel libs
+    # present under sys.prefix (cuda profile) -> "cuda", re-proven by the
+    # nvidia-smi PID VRAM lookup (device claims alone are the silent-fallback
+    # trap). Libs absent (cpu profile, no LD prefix) -> the ctypes preload
+    # gate legitimately lands on "cpu". The former silent skip is now a hard
+    # assertion either way, so a profile/device mismatch fails loud.
+    libs = embedder_mod._find_nvidia_libs()
+    cuda_profile = all(
+        libs[key] is not None for key in ("cudart", "cublas", "cublasLt")
+    )
+    if not cuda_profile:
+        assert embedder.device == "cpu", f"device reported: {embedder.device}"
+        return
     assert embedder.device == "cuda", f"device reported: {embedder.device}"
     vram = embedder_mod._pid_vram_on_gpu(os.getpid())
     assert vram is not None, "device=cuda but nvidia-smi shows no VRAM for this pid"
