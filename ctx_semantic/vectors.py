@@ -243,7 +243,10 @@ def search(
     the adapter BEFORE the top-k cut on EVERY call, so k results are live
     results. Raises ValueError when qvec's dim differs from the stored dim.
     """
-    # ponytail: brute-force cosine over ≤~100k chunks is sub-ms here; switch to sqlite-vec/HNSW beyond that
+    # ponytail: brute-force cosine is sub-ms up to ~50k chunks. Trigger to revisit: chunks > ~50k
+    # or vector-leg P99 > 50ms -> evaluate ANN directly (usearch/hnswlib, or sqlite-vec rescore once
+    # stable) — sqlite-vec stable is brute-force too, same algorithm, no point swapping skins.
+    # Evidence 2026-09-29: 89 vecs / 0.4MB matrix, e2e 21ms total query.
     loaded = _load_matrix(
         _matrix_key(vectors_con, db_path, model), vectors_con, db_path, model
     )
