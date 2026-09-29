@@ -42,9 +42,11 @@ packages = ["ctx_semantic"]
 
 [tool.uv.sources]
 # Local copy of the abetlen cu124 wheel (URL + sha256 inside
-# scripts/uv-sync.sh, which must be kept in sync with this pin on bumps).
-# Single-host project, same convention as embedder.py's absolute GGUF path.
-llama-cpp-python = { path = "/home/guangbin/ctx-semantic/models/wheels/llama_cpp_python-0.3.35-py3-none-manylinux_2_35_x86_64.whl" }
+# scripts/uv-sync.sh, which materializes it at this repo-relative path —
+# any clone location works; keep pin, script constants, and uv.lock in
+# sync on bumps. models/ is gitignored: run scripts/uv-sync.sh BEFORE any
+# bare `uv run`, or the path source is missing.
+llama-cpp-python = { path = "models/wheels/llama_cpp_python-0.3.35-py3-none-manylinux_2_35_x86_64.whl" }
 
 [tool.pytest.ini_options]
 markers = [
