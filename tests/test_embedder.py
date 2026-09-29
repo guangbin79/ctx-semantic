@@ -88,6 +88,7 @@ def test_ensure_loaded_cpu_fallback_when_vram_check_falsy(
         Embedder, "_new_model", _fake_factory(made, [FakeModel(), FakeModel()])
     )
     monkeypatch.setattr(embedder_mod, "_pid_vram_on_gpu", lambda pid: None)
+    monkeypatch.setattr(embedder_mod, "_preload_cuda_libs", lambda: True)
 
     e = Embedder(cache_dir=CACHE_DIR)
     with caplog.at_level(logging.WARNING, logger="ctx_semantic.embedder"):
@@ -107,6 +108,7 @@ def test_ensure_loaded_cuda_success_records_vram(
         Embedder, "_new_model", _fake_factory(made, [FakeModel()])
     )
     monkeypatch.setattr(embedder_mod, "_pid_vram_on_gpu", lambda pid: "512 MiB")
+    monkeypatch.setattr(embedder_mod, "_preload_cuda_libs", lambda: True)
 
     e = Embedder(cache_dir=CACHE_DIR)
     with caplog.at_level(logging.INFO, logger="ctx_semantic.embedder"):
@@ -125,6 +127,7 @@ def test_ensure_loaded_cuda_success_records_vram(
         _fake_factory(made, [FakeModel(fail_on_call=2), FakeModel()]),
     )
     monkeypatch.setattr(embedder_mod, "_pid_vram_on_gpu", lambda pid: "512 MiB")
+    monkeypatch.setattr(embedder_mod, "_preload_cuda_libs", lambda: True)
 
     e = Embedder(cache_dir=CACHE_DIR)
     with caplog.at_level(logging.WARNING, logger="ctx_semantic.embedder"):
@@ -151,6 +154,7 @@ def test_embed_batch_cpu_failure_reraises_without_rebuild(
         ),
     )
     monkeypatch.setattr(embedder_mod, "_pid_vram_on_gpu", lambda pid: None)
+    monkeypatch.setattr(embedder_mod, "_preload_cuda_libs", lambda: True)
 
     e = Embedder(cache_dir=CACHE_DIR)
     e._ensure_loaded()  # vram falsy -> cuda attempt, cpu fallback at load
@@ -177,9 +181,31 @@ def test_ensure_loaded_probe_shape_mismatch_raises(monkeypatch):
         Embedder, "_new_model", lambda *args: WrongDimModel()
     )
     monkeypatch.setattr(embedder_mod, "_pid_vram_on_gpu", lambda pid: "1 MiB")
+    monkeypatch.setattr(embedder_mod, "_preload_cuda_libs", lambda: True)
     e = Embedder(cache_dir=CACHE_DIR)
     with pytest.raises(AssertionError, match="1024"):
         e.embed_query("shape check")
+
+
+def test_ensure_loaded_preload_failure_skips_cuda_attempt(
+    monkeypatch: pytest.MonkeyPatch, caplog
+):
+    # Preload gate: missing nvidia libs -> NO CUDA attempt at all, straight
+    # to CPU (graceful on a cpu-wheel install; on a cu124 wheel with broken
+    # libs the import inside _new_model still raises — architectural, not
+    # swallowed — surfaced by the real-model fixture's availability skip).
+    made: list[bool] = []
+    monkeypatch.setattr(Embedder, "_new_model", _fake_factory(made, [FakeModel()]))
+    monkeypatch.setattr(embedder_mod, "_preload_cuda_libs", lambda: False)
+
+    e = Embedder(cache_dir=CACHE_DIR)
+    with caplog.at_level(logging.WARNING, logger="ctx_semantic.embedder"):
+        v = e.embed_query("preload-fail probe")
+
+    assert made == [False]  # GPU attempt skipped entirely
+    assert e.device == "cpu"
+    assert v.shape == (DIM,)
+    assert "giving up the GPU attempt" in caplog.text
 
 
 # --- _pid_vram_on_gpu: nvidia-smi parsing table ------------------------------
@@ -210,6 +236,52 @@ def test_pid_vram_on_gpu_table(monkeypatch, which, run_raises, stdout, expected)
 
     monkeypatch.setattr(embedder_mod.subprocess, "run", fake_run)
     assert embedder_mod._pid_vram_on_gpu(os.getpid()) == expected
+
+# --- _find_nvidia_libs: sys.prefix nvidia-wheel discovery (pure, TDD) ---------
+
+
+def _make_nvidia_tree(prefix: Path, present: set[str]) -> None:
+    """Fake nvidia-wheel libs under a fake sys.prefix, venv layout:
+
+    lib/pythonX.Y/site-packages/nvidia/<pkg>/lib/<soname>
+    """
+    sonames = {
+        "cudart": ("cuda_runtime", "libcudart.so.12"),
+        "cublas": ("cublas", "libcublas.so.12"),
+        "cublasLt": ("cublas", "libcublasLt.so.12"),
+    }
+    for key in present:
+        pkg, fname = sonames[key]
+        d = prefix / "lib" / "python3.10" / "site-packages" / "nvidia" / pkg / "lib"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / fname).touch()
+
+
+def test_find_nvidia_libs_all_present(monkeypatch, tmp_path):
+    _make_nvidia_tree(tmp_path, {"cudart", "cublas", "cublasLt"})
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+    found = embedder_mod._find_nvidia_libs()
+    assert set(found) == {"cudart", "cublas", "cublasLt"}
+    for key in ("cudart", "cublas", "cublasLt"):
+        assert found[key] is not None and found[key].is_file()
+
+
+def test_find_nvidia_libs_missing_cublas_lt(monkeypatch, tmp_path):
+    _make_nvidia_tree(tmp_path, {"cudart", "cublas"})
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+    found = embedder_mod._find_nvidia_libs()
+    assert found["cudart"].is_file() and found["cublas"].is_file()
+    assert found["cublasLt"] is None
+
+
+def test_find_nvidia_libs_none_present(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+    found = embedder_mod._find_nvidia_libs()
+    assert found == {"cudart": None, "cublas": None, "cublasLt": None}
+
+
+# --- real-model contract tests (T4; llama_cpp pinned in the lock since T5) -----
+
 
 
 # --- real-model contract tests (T4; llama_cpp pinned in the lock since T5) -----

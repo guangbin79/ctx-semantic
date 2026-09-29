@@ -16,18 +16,23 @@ Truncation: llama.cpp truncates each input at n_ctx = 8192 tokens; the
 corpus p99 is 2146 tokens (spike phase 8), so only extreme outliers are
 clipped.
 
-GPU: llama-cpp-python ships its own CUDA backend (n_gpu_layers=-1) — no
-provider libraries to preload. Actual GPU use is verified via nvidia-smi
-PID lookup, never device claims — a CUDA session that silently fell back
-to CPU is treated as a load failure and retried on CPU (n_gpu_layers=0).
+GPU: on a cuda install the nvidia-wheel CUDA libs are RTLD_GLOBAL-preloaded
+from sys.prefix before llama_cpp is imported (no LD_LIBRARY_PATH needed;
+abetlen/llama-cpp-python#1460). Missing libs skip the GPU attempt. Actual
+GPU use is verified via nvidia-smi PID lookup, never device claims — a CUDA
+session that silently fell back to CPU is treated as a load failure and
+retried on CPU (n_gpu_layers=0).
 """
 
 from __future__ import annotations
 
+import ctypes
+import glob
 import logging
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Final
 
@@ -89,14 +94,65 @@ def _l2_normalized(mat: npt.NDArray[np.floating]) -> npt.NDArray[np.float32]:
     return m / np.maximum(np.linalg.norm(m, axis=1, keepdims=True), 1e-12)
 
 
+# nvidia wheels ship the CUDA runtime under site-packages; globs are anchored
+# at sys.prefix/lib and `**` tolerates the pythonX.Y/site-packages segment
+# (convention: tests/test_embedder.py nvidia-dir skip branch).
+_NVIDIA_WHEEL_LIBS: Final[dict[str, str]] = {
+    "cudart": "lib/**/nvidia/cuda_runtime/lib/libcudart.so.12",
+    "cublas": "lib/**/nvidia/cublas/lib/libcublas.so.12",
+    "cublasLt": "lib/**/nvidia/cublas/lib/libcublasLt.so.12",
+}
+
+
+def _find_nvidia_libs() -> dict[str, Path | None]:
+    """Pure discovery of the nvidia-wheel CUDA libs under sys.prefix.
+
+    A missing lib maps its key to None.
+    """
+    found: dict[str, Path | None] = {}
+    for key, pattern in _NVIDIA_WHEEL_LIBS.items():
+        hits = sorted(glob.glob(str(Path(sys.prefix) / pattern), recursive=True))
+        found[key] = Path(hits[0]) if hits else None
+    return found
+
+
+def _preload_cuda_libs() -> bool:
+    """RTLD_GLOBAL-preload the nvidia-wheel libs so llama_cpp's import-time
+    dlopen of libcudart/libcublas resolves in-process — no LD_LIBRARY_PATH
+    (abetlen/llama-cpp-python#1460). cudart loads first so cublas' DT_NEEDED
+    finds its soname already loaded. Returns False (warning logged, never
+    raises) when any lib is missing or fails to load.
+    """
+    found = _find_nvidia_libs()
+    missing: list[str] = []
+    for name in ("cudart", "cublas", "cublasLt"):
+        path = found[name]
+        if path is None:
+            missing.append(name)
+            continue
+        try:
+            ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+        except OSError as exc:
+            logger.warning("ctypes preload failed for %s: %s", path, exc)
+            missing.append(name)
+    if missing:
+        logger.warning(
+            "nvidia wheel libs unavailable: %s — cannot preload CUDA runtime",
+            ", ".join(missing),
+        )
+        return False
+    return True
+
+
 class Embedder:
     """Lazy-loading qwen3-embedding-0.6b embedder with deterministic device
     fallback.
 
-    Load flow: CUDA attempt (n_gpu_layers=-1) -> probe embed -> nvidia-smi
-    PID check. Any failure (backend unavailable, lib load error, OOM, silent
-    CPU fallback) retries once on CPU and is logged; `device` then reports
-    "cpu". Both devices failing raises the underlying error.
+    Load flow: nvidia-lib preload gate -> CUDA attempt (n_gpu_layers=-1) ->
+    probe embed -> nvidia-smi PID check. Any failure (backend unavailable,
+    lib load error, OOM, silent CPU fallback) retries once on CPU and is
+    logged; `device` then reports "cpu". Both devices failing raises the
+    underlying error.
     """
 
     def __init__(self, cache_dir: str | os.PathLike[str] = DEFAULT_CACHE_DIR) -> None:
@@ -126,26 +182,38 @@ class Embedder:
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
-        try:
-            model = self._new_model(True)
-            probe = np.stack(model.embed(["device probe"]))
-            vram = _pid_vram_on_gpu(os.getpid())
-            if vram is None:
-                raise RuntimeError(
-                    "CUDA session created but nvidia-smi shows no VRAM for this "
-                    "pid — silent CPU fallback, refusing to claim GPU"
-                )
-            self._device = "cuda"
-            logger.info("embedder on GPU: pid=%s vram=%s", os.getpid(), vram)
-        except Exception as exc:  # noqa: BLE001 — spec: ANY CUDA failure (OOM, backend, lib load) falls back
+        if not _preload_cuda_libs():
+            # cpu-wheel install (graceful CPU) or broken nvidia wheels: skip
+            # the CUDA attempt entirely. On a cu124 wheel with broken libs the
+            # import inside _new_model still raises — architectural, let it
+            # surface (diagnosed in Troubleshooting), do not swallow.
             logger.warning(
-                "CUDA init failed (%s: %s) — falling back to CPU embedder",
-                type(exc).__name__,
-                exc,
+                "CUDA preload failed — giving up the GPU attempt, loading CPU embedder"
             )
             model = self._new_model(False)
             probe = np.stack(model.embed(["device probe"]))
             self._device = "cpu"
+        else:
+            try:
+                model = self._new_model(True)
+                probe = np.stack(model.embed(["device probe"]))
+                vram = _pid_vram_on_gpu(os.getpid())
+                if vram is None:
+                    raise RuntimeError(
+                        "CUDA session created but nvidia-smi shows no VRAM for this "
+                        "pid — silent CPU fallback, refusing to claim GPU"
+                    )
+                self._device = "cuda"
+                logger.info("embedder on GPU: pid=%s vram=%s", os.getpid(), vram)
+            except Exception as exc:  # noqa: BLE001 — spec: ANY CUDA failure (OOM, backend, lib load) falls back
+                logger.warning(
+                    "CUDA init failed (%s: %s) — falling back to CPU embedder",
+                    type(exc).__name__,
+                    exc,
+                )
+                model = self._new_model(False)
+                probe = np.stack(model.embed(["device probe"]))
+                self._device = "cpu"
         assert probe.shape == (1, DIM), (
             f"{MODEL_NAME} embedding shape {probe.shape}, want (1, {DIM})"
         )
