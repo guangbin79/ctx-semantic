@@ -8,10 +8,10 @@ the BM25 leg non-empty so RRF fusion is genuinely exercised). A hit means
 the gold chunk's ROWID appears in the top-5 — chunk identity, never title
 substrings.
 
-Corpus: resampled 2026-09-28 from the live ctx-semantic-migration content
-DB (0ef2d5f23b410348, 400 chunks) via ``--db`` — the 2026-09-21 corpus
-(53883986ad0936d4) was purged by a context-mode upgrade; the old baseline
-report lives on orphaned in the same evidence dir (2026-09-21 baseline).
+Corpus: resampled 2026-09-29 from the live content DB (0ef2d5f23b410348,
+75 chunks) — the 2026-09-28 corpus (400 chunks) was purged by another
+context-mode re-index, and the 2026-09-21 corpus (53883986ad0936d4) before
+it; older baseline reports live on in the same evidence dir.
 
 Per query the harness runs the exact T7 server ranking path at limit=5:
 dbadapter.bm25_search(query, 5) vs hybrid.rrf(bm25, vectors.search(qvec,
@@ -52,40 +52,45 @@ TOP_K = 5  # hit window — mirrors the server tool's limit
 VEC_K = 20  # max(4*TOP_K, 20) — hybrid.search's vector-leg width
 REPORT_PATH = Path.home() / ".omo" / "evidence" / "ctx-semantic" / "recall-report.md"
 
-# (query, lang, gold_rowid, gold_title) — paraphrases authored 2026-09-28
-# from a read-only sample of the live content DB (0ef2d5f23b410348).
+# (query, lang, gold_rowid, gold_title) — paraphrases authored 2026-09-29
+# from a read-only sample of the live content DB (0ef2d5f23b410348,
+# review-loop investigation corpus); every case was probed through the
+# real T7 ranking path before being pinned here. zh queries are spaceless
+# CJK: unicode61 tokenizes each as ONE token no chunk contains, so the
+# BM25 leg is empty by construction and the vector leg must carry it.
 # gold_title guards rowid drift: the harness aborts (exit 2) if the rowid
-# no longer holds the recorded chunk.
+# no longer holds the recorded chunk — re-sample when the live corpus
+# churns (purges: 2026-09-21 → 09-28 → 09-29).
 CASES: list[tuple[str, str, int, str]] = [
-    # --- zh: pure-CJK paraphrases of English chunks (zero lexical overlap) ---
-    ("这个文本嵌入模型支持上百种语言，参数量只有六亿，最长能处理三万二的输入序列", "zh", 28,
-     "[](#qwen3-embedding-06b-gguf)Qwen3-Embedding-0.6B-GGUF > [](#model-overview)Model Overview"),
-    ("为什么建议在查询侧添加任务说明，不加会造成多大程度的检索效果下降", "zh", 30,
-     "[](#qwen3-embedding-06b-gguf)Qwen3-Embedding-0.6B-GGUF > [](#usage)Usage"),
-    ("预编译的显卡加速安装包对显卡计算能力和解释器版本有哪些前提要求", "zh", 88,
-     "Lines 127-146"),
-    ("这个模型是从哪个基座微调出来的又衍生出多少适配器和量化版本", "zh", 56,
-     "[](#qwen3-embedding-06b)Qwen3-Embedding-0.6B > Model tree for Qwen/Qwen3-Embedding-0.6B[](/docs/hub/model-cards#specifying-a-base-model)"),
-    ("苹果自研芯片的机器上为什么要确认装了对应架构的解释器", "zh", 96,
-     "Note: If you are using Apple Silicon (M1) Mac, make sure you have installed a ve"),
-    ("源码编译时打开英伟达加速的编译开关该怎么写", "zh", 87,
-     "Lines 109-128"),
+    # --- zh: spaceless-CJK paraphrases (BM25 leg empty by construction) ---
+    ("改动很小的时候能不能免掉最后一道整体验收", "zh", 8,
+     "开发完成自动评审循环（review-loop） > 判据 > 终闸条件与 Trivial 豁免"),
+    ("一轮修复循环里各种检查最多叠几层总次数封顶是多少", "zh", 10,
+     "开发完成自动评审循环（review-loop） > 判据 > 轮次预算分配优先级"),
+    ("修不完还剩严重问题时要不要继续自动跑下去该找谁决定", "zh", 12,
+     "开发完成自动评审循环（review-loop） > 判据 > 超限上报"),
+    ("两个进程同时抢同一个完成信号怎样防止重复消费", "zh", 16,
+     "开发完成自动评审循环（review-loop） > 判据 > 交接原子性与交付语义 (2026-09-27)"),
+    ("上下文被压缩之后进行到第几轮应该以什么记录为准", "zh", 20,
+     "开发完成自动评审循环（review-loop） > ⑫ 上下文检查点（压缩免疫）"),
+    ("无界面一次性运行时插件异步收尾为什么总是被掐断", "zh", 59,
+     "opencode run headless 销毁窗口 vs 插件 idle-handler 尾段竞态 > Root Cause"),
     # --- en: lexical overlap present — BM25 leg non-empty, RRF fused ---
     # (FTS5 MATCH is an implicit AND of all tokens, so these are authored
     #  with tokens that co-occur in the gold chunk.)
-    ("cu121 extra-index-url wheel", "en", 89,
-     "- `cu132`: CUDA 13.2"),
-    ("chatml llama-2 gemma chat formats", "en", 101,
-     "Lines 361-380"),
-    ("windows visual studio mingw xcode gcc", "en", 83,
-     "- Linux: gcc or clang"),
-    ("installed fastembed version", "en", 62,
-     "installed fastembed version"),
-    # --- mixed zh+en: single Latin token keeps BM25 matching, vector carries semantics ---
-    ("skill-up workspace 污染", "mixed", 211,
-     "skill-up 评测 workspace 污染 opencode 技能注册表 > Usage Pattern"),
-    ("agent 资产清单 部署", "mixed", 215,
-     "dotfiles agent 资产清单 v2：自建入 git + 第三方安装清单"),
+    ("commit then idle block porcelain", "en", 67,
+     "S1 commit-then-idle   主杀场景：编辑+提交后 idle（老插件 gate=porcelain 必 BLOCK）→ 必须注入"),
+    ("s4 omo edits block", "en", 70,
+     "S4 .omo 噪声           仅写 .omo 路径 → gate=edits BLOCK，不得注入"),
+    ("tmux tui plugin-debug log", "en", 74,
+     "驱动：tmux TUI + REVIEW_LOOP_DEBUG=1；断言 plugin-debug.log 闸门行 + git 状态 + flag 生命周期"),
+    ("opencode.log review-loop grep tail", "en", 40,
+     "主日志 9-28晚至今天 review-loop 行"),
+    # --- mixed zh+en: Latin token anchors lexical match, vector carries semantics ---
+    ("flag 消费之后为什么会话被封口", "mixed", 71,
+     "S5 flag 消费+会话封口  S1 注入后：flag 被删；再 idle → injected.has BLOCK"),
+    ("dotfiles 插件提交历史全列表怎么查", "mixed", 43,
+     "插件提交历史全列表"),
 ]
 
 
