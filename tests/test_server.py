@@ -493,3 +493,50 @@ def test_resync_with_zero_embedded_has_no_progress_line(
     out = server.ctx_hybrid_search(queries=["deploy"])  # re-sync, embedded=0
     assert "(embedded" not in out
     assert "alpha deploy guide" in out  # results still served
+
+
+# ------------------------------------------------------------- preflight
+
+
+def test_preflight_passes_silently_on_healthy_db(tool_env, capsys):
+    assert server.preflight() == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""  # healthy: zero noise on stderr
+
+
+def test_preflight_drift_refuses_to_start(tool_env, capsys):
+    # Hard gate: a dead MCP registration is more visible than per-call errors.
+    con = sqlite3.connect(tool_env)
+    con.execute("ALTER TABLE sources ADD COLUMN upstream_extra TEXT")
+    con.commit()
+    con.close()
+    assert server.preflight() == 1
+    err = capsys.readouterr().err
+    assert "Fix:" in err and "转告" in err  # actionable + relay line
+
+
+def test_preflight_stale_warns_but_does_not_kill(tool_env, capsys):
+    # Heuristic must never be fatal at startup — idle projects false-positive.
+    import os
+
+    old = time.time() - 20 * 86400
+    os.utime(tool_env, (old, old))
+    assert server.preflight() == 0
+    assert "WARNING" in capsys.readouterr().err
+
+
+def test_preflight_unindexed_project_is_pass(tool_env, monkeypatch, capsys):
+    monkeypatch.setenv("CTX_SEMANTIC_DB", str(tool_env.parent / "never.db"))
+    assert server.preflight() == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_search_prepends_stale_warning(tool_env):
+    # Served, but the doubt is visible on every call until verified.
+    import os
+
+    old = time.time() - 20 * 86400
+    os.utime(tool_env, (old, old))
+    out = server.ctx_hybrid_search(queries=["deploy"])
+    assert out.startswith("⚠️")
+    assert "alpha deploy guide" in out

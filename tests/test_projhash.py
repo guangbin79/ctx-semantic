@@ -155,3 +155,58 @@ def test_self_check_live_project():
         assert chunks > 0, f"content DB has no chunks: {db}"
         return  # one fully verified live project is sufficient
     pytest.skip("no codegraph-indexed project with a live content DB")
+
+
+# ----------------------------------------------------------- stale_status
+
+
+def test_stale_status_fresh_db_returns_none(tmp_path):
+    from ctx_semantic.projhash import stale_status
+
+    db = tmp_path / "a16hash16abcdef1.db"
+    db.write_bytes(b"x")
+    mtime = db.stat().st_mtime
+    assert stale_status(db, now=mtime + 86400) is None  # 1 day old: live
+
+
+def test_stale_status_old_db_reports_days_and_probe_hint(tmp_path):
+    from ctx_semantic.projhash import stale_status
+
+    db = tmp_path / "a16hash16abcdef1.db"
+    db.write_bytes(b"x")
+    mtime = db.stat().st_mtime
+    warn = stale_status(db, now=mtime + 20 * 86400)
+    assert warn is not None
+    assert "20" in warn  # age in days is the evidence
+    assert "probe" in warn  # points at the drift probe for the verdict
+
+
+def test_stale_status_old_db_with_newer_sibling_names_it(tmp_path):
+    from ctx_semantic.projhash import stale_status
+
+    db = tmp_path / "a16hash16abcdef1.db"
+    db.write_bytes(b"x")
+    sibling = tmp_path / "b16hash16abcdef2.db"
+    sibling.write_bytes(b"x")
+    mtime = db.stat().st_mtime
+    newer = mtime + 10 * 86400
+    os.utime(sibling, (newer, newer))
+    warn = stale_status(db, now=mtime + 20 * 86400)
+    assert warn is not None and "sibling" in warn
+
+
+def test_stale_status_missing_file_is_none_not_crash(tmp_path):
+    from ctx_semantic.projhash import stale_status
+
+    assert stale_status(tmp_path / "nope.db") is None
+
+
+def test_stale_status_threshold_is_knobbed(tmp_path, monkeypatch):
+    # 14d default: a 5d-old DB is fresh; dropping the knob to 1d flips it.
+    from ctx_semantic import projhash
+
+    monkeypatch.setattr(projhash, "STALE_AFTER_DAYS", 1.0)
+    db = tmp_path / "a16hash16abcdef1.db"
+    db.write_bytes(b"x")
+    mtime = db.stat().st_mtime
+    assert projhash.stale_status(db, now=mtime + 5 * 86400) is not None

@@ -27,3 +27,7 @@
 ## [2026-09-29] ingest | embedding-model
 - 可移植性收口：[tool.uv.sources] 轮钉改仓内相对路径（models/wheels/，uv.lock 同步相对化，任意 clone 位置 uv-sync.sh 全链自洽）；新增 docs/INSTALL.md 固定安装参考（前置/资产/修复原理/验证/MCP 注册/排障/升版契约），README Setup 挂链
 - Types: Decision, Module Info
+
+## [2026-09-29] ingest | upstream-contract
+- 新增 drift 防护闭环：probe CLI（退出码 0/1/2，model-free）、SchemaDrift 修复套件消息（dump+Fix+转告行）、server preflight 硬门（drift 拒启 / stale 仅 stderr 警告）、查询结果 ⚠️ stale 前缀；15 新测试先红后绿，168 全绿；真实库冒烟 PASS
+- Types: Decision, Strategy, Module Info

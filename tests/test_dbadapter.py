@@ -449,3 +449,35 @@ def test_retryable_classification():
     assert dbadapter._retryable(sqlite3.OperationalError("database is busy"))
     assert not dbadapter._retryable(sqlite3.OperationalError("no such table: x"))
     assert not dbadapter._retryable(sqlite3.OperationalError("unable to open"))
+
+
+# -------------------------------------------------- _assert_schema (direct)
+
+
+def test_assert_schema_missing_table_in_memory():
+    # Direct call (not via open_db): an empty DB has none of the expected
+    # tables — the loop must name the FIRST missing one.
+    con = sqlite3.connect(":memory:")
+    with pytest.raises(SchemaDrift, match="missing table: sources"):
+        dbadapter._assert_schema(con)
+
+
+def test_drift_message_carries_dump_and_fix(tmp_path):
+    # An upstream-added column must trip the gate AND the error text must
+    # carry everything a fix needs: column diff, new-schema dump, fix steps,
+    # and the agent relay line (the MCP SDK turns str(exc) into the tool
+    # error the coding agent sees).
+    db = tmp_path / "drifted.db"
+    make_fixture(db)
+    con = sqlite3.connect(db)
+    con.execute("ALTER TABLE sources ADD COLUMN upstream_extra TEXT")
+    con.commit()
+    con.close()
+    with pytest.raises(SchemaDrift) as ei:
+        open_db(db)
+    msg = str(ei.value)
+    assert "unexpected=['upstream_extra']" in msg
+    assert "sqlite_master" in msg  # new schema attached for the fix
+    assert "CREATE TABLE sources" in msg
+    assert "Fix:" in msg and "EXPECTED_COLUMNS" in msg
+    assert "转告" in msg  # agent relay instruction, human-facing

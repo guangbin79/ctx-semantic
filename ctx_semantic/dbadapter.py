@@ -116,18 +116,50 @@ def open_db(path: str | Path) -> sqlite3.Connection:
     return con
 
 
+def _schema_dump(con: sqlite3.Connection) -> str:
+    """All CREATE statements, name-ordered — the fix-side raw material."""
+    rows = con.execute(
+        "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name"
+    ).fetchall()
+    return "\n".join(f"  {row[0]};" for row in rows)
+
+
 def _assert_schema(con: sqlite3.Connection) -> None:
+    """Raise SchemaDrift whose message is a complete fix kit.
+
+    str(exc) becomes the MCP tool error (and the preflight stderr line),
+    so it carries everything a fix needs: the column diff, the new schema
+    verbatim, the exact edit + re-verify steps, and a Chinese relay line
+    for the human behind the agent.
+    """
+    drift: str | None = None
     for table, expected in EXPECTED_COLUMNS.items():
         actual = {row[1] for row in con.execute(f"PRAGMA table_info({table})")}
         if not actual:
-            raise SchemaDrift(f"missing table: {table}")
-        if actual != expected:
+            drift = f"missing table: {table}"
+        elif actual != expected:
             missing = sorted(expected - actual)
             extra = sorted(actual - expected)
-            raise SchemaDrift(
+            drift = (
                 f"table {table} drifted:"
                 f" missing={missing or 'none'} unexpected={extra or 'none'}"
             )
+        if drift is not None:
+            break
+    if drift is None:
+        return
+    raise SchemaDrift(
+        "context-mode DB layout changed — refusing to serve (fail-loud"
+        " by design).\n"
+        f"  {drift}\n"
+        "schema now (sqlite_master dump):\n"
+        f"{_schema_dump(con)}\n"
+        "Fix: diff the dump against EXPECTED_COLUMNS in"
+        " ctx_semantic/dbadapter.py (see the 'verified 2026-09-20' comment"
+        " there), update it, then `uv run pytest -m integration`.\n"
+        "请将此错误转告用户：上游 context-mode 更新改变了知识库结构，"
+        "语义检索已停用；按上方 Fix 步骤更新契约后即恢复。"
+    )
 
 
 def _append_filters(

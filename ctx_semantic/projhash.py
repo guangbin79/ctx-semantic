@@ -33,6 +33,8 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import time
+
 from pathlib import Path
 
 CONTENT_DIR = Path.home() / ".config" / "opencode" / "context-mode" / "content"
@@ -94,3 +96,52 @@ def resolve_db(project_dir: str | os.PathLike[str] | None = None) -> Path:
     if env:
         return Path(env)
     return db_path(resolve(project_dir))
+
+
+# Heuristic freshness knob: context-mode writes session events on every
+# active session, so a resolved DB dormant past this many days is either an
+# idle project (benign) or a moved hash scheme (drift) — stale_status
+# reports, the human/probe decides. Days, not seconds, on purpose.
+STALE_AFTER_DAYS = 14.0
+
+
+def stale_status(db: Path, *, now: float | None = None) -> str | None:
+    """Heuristic staleness of a resolved content DB. None = looks live.
+
+    Two mtime signals, both cheap stat() calls (no DB open, no model):
+    1. The DB has not been written for > STALE_AFTER_DAYS.
+    2. Sibling *.db files in the same content dir are newer — weak evidence
+       the machine stayed active after this DB stopped receiving writes.
+
+    WARNING-grade by contract: callers must never make this fatal on its
+    own (idle projects false-positive). Hard drift is dbadapter.SchemaDrift.
+    """
+    if now is None:
+        now = time.time()
+    try:
+        mtime = db.stat().st_mtime
+    except OSError:
+        return None  # absent file is the caller's "unindexed" branch
+    age_days = (now - mtime) / 86400.0
+    if age_days <= STALE_AFTER_DAYS:
+        return None
+    newer_siblings = 0
+    for sib in db.parent.glob("*.db"):
+        if sib == db:
+            continue
+        try:
+            if sib.stat().st_mtime > mtime:
+                newer_siblings += 1
+        except OSError:
+            continue
+    sibling_note = (
+        f"; {newer_siblings} sibling DB(s) in {db.parent.name}/ are newer"
+        " — active KB may have moved (hash scheme drift?)"
+        if newer_siblings
+        else ""
+    )
+    return (
+        f"resolved DB not written for {age_days:.0f}d{sibling_note}."
+        " If context-mode upgraded recently its DB naming/layout may have"
+        " changed — run `uv run python -m ctx_semantic.probe` for a verdict."
+    )

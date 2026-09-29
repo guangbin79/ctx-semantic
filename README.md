@@ -45,6 +45,21 @@ print(MODEL_NAME, e.device)
 "
 ```
 
+## Drift probe
+
+context-mode upgrades can change the DB layout or project-hash scheme
+this sidecar reverse-depends on. Gates: `open_db` fails loud on schema
+drift (the error text carries the full fix kit), the server refuses to
+start on it (preflight), and an mtime heuristic warns on stale DBs.
+Health check from anywhere:
+
+```sh
+uv run --project ~/ctx-semantic python -m ctx_semantic.probe [--project DIR]
+```
+
+Exit codes: `0` PASS/SKIP · `1` DRIFT (fix kit printed) · `2` STALE.
+Run it after every `ctx_upgrade`.
+
 ## Environment notes
 
 - GPU inference needs the nvidia-wheel lib dirs on LD_LIBRARY_PATH — `run.sh`

@@ -19,6 +19,7 @@ Run via ../run.sh (LD_LIBRARY_PATH for the nvidia CUDA libs) or:
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 
@@ -101,7 +102,9 @@ def ctx_hybrid_search(
     Returns:
         Markdown sections, or "(no results)". The first call in a server
         lifetime may embed newly indexed chunks and prepends one
-        "(embedded N chunks in Xs)" progress line.
+        "(embedded N chunks in Xs)" progress line. A stale-looking KB (mtime
+        heuristic) prefixes a ⚠️ line but still serves; an upstream layout
+        change raises an MCP tool error — relay that message to the user
     """
     if not 1 <= len(queries) <= 3:
         raise ValueError("queries must contain 1-3 items")
@@ -111,6 +114,7 @@ def ctx_hybrid_search(
         # projhash contract: an unindexed project resolves to a nonexistent
         # DB — that is an empty knowledge base, not an error.
         return hybrid.NO_RESULTS
+    stale_note = projhash.stale_status(db)
     con = dbadapter.open_db(db)
     try:
         adapter = BoundAdapter(con, db)
@@ -138,7 +142,7 @@ def ctx_hybrid_search(
                 _sync_interval[key] = interval
         vcon = vectors.connect()
         try:
-            return hybrid.search(
+            result = hybrid.search(
                 adapter,
                 vcon,
                 _get_embedder(),
@@ -150,9 +154,46 @@ def ctx_hybrid_search(
             )
         finally:
             vcon.close()
+        if stale_note is not None:
+            # Heuristic, non-fatal: keep serving, but the doubt rides every
+            # result until someone runs the probe (idle projects false-pos).
+            result = f"⚠️ knowledge base may be stale — {stale_note}\n{result}"
+        return result
     finally:
         con.close()
 
 
+def preflight() -> int:
+    """Startup gate before mcp.run: 0 = serve, 1 = refuse to start.
+
+    Millisecond cost (stat + sqlite open + PRAGMA, no model load — the
+    fast-start contract above is untouched). Hard SchemaDrift exits 1: the
+    tool would fail every call anyway, and a dead MCP registration in
+    the client is more visible than per-call errors. Stale stays
+    heuristic — stderr warning only, never fatal here (idle projects
+    false-positive).
+    """
+    try:
+        db = projhash.resolve_db(None)
+    except projhash.ProjHashError as exc:
+        print(f"ctx-semantic preflight: cannot resolve project ({exc})", file=sys.stderr)
+        return 0
+    if not db.is_file():
+        return 0  # unindexed project: empty KB, not an error
+    stale = projhash.stale_status(db)
+    if stale is not None:
+        print(f"ctx-semantic preflight WARNING: {stale}", file=sys.stderr)
+    try:
+        dbadapter.open_db(db).close()
+    except dbadapter.SchemaDrift as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except FileNotFoundError:
+        return 0  # raced away between is_file and open; queries will report
+    return 0
+
+
 if __name__ == "__main__":
+    if preflight():
+        raise SystemExit(1)
     mcp.run("stdio")
