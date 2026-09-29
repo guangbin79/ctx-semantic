@@ -31,3 +31,7 @@
 ## [2026-09-29] ingest | upstream-contract
 - 新增 drift 防护闭环：probe CLI（退出码 0/1/2，model-free）、SchemaDrift 修复套件消息（dump+Fix+转告行）、server preflight 硬门（drift 拒启 / stale 仅 stderr 警告）、查询结果 ⚠️ stale 前缀；15 新测试先红后绿，168 全绿；真实库冒烟 PASS
 - Types: Decision, Strategy, Module Info
+
+## [2026-09-29] ingest | upgrade-paths
+- 三向升级调研落档：向量索引不换 sqlite-vec（触发线 chunks>~50k 或向量腿 P99>50ms）、GPU 双安装轮廓 + ctypes RTLD_GLOBAL 预载（cpu 默认/cuda opt-in）、独立化定方向 A 保持 sidecar（B=加自有摄取工具留作可逆升级）
+- Types: Decision, Module Info
