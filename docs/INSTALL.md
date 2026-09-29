@@ -25,6 +25,8 @@ Switching profiles = re-running `scripts/uv-sync.sh` with the other argument.
 | NVIDIA GPU + CUDA 12.x driver | cuda only | model needs ~2 GB VRAM (peak 1966 MiB at batch 32 on a 6 GB card). No GPU / no nvidia-smi → use the cpu profile (slower, correct) |
 | C++ build chain: cmake, ninja, gcc/g++ | cuda only | the cu124 wheel's `libggml-cpu` is rebuilt from the sdist on EVERY host (see "Why the repair step" below). The cpu profile needs no compiler at all — the cpu wheel is prebuilt |
 
+Network: hosts that cannot reach pypi.org need `UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple` (or any PyPI mirror) exported even when every wheel is already cached — uv still fetches dependency metadata live, and without a reachable index `uv-sync.sh` fails (observed as F3: syncs with all wheels on disk still died on the metadata fetch).
+
 ## Quick start
 
 ```sh

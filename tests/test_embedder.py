@@ -283,10 +283,6 @@ def test_find_nvidia_libs_none_present(monkeypatch, tmp_path):
 # --- real-model contract tests (T4; llama_cpp pinned in the lock since T5) -----
 
 
-
-# --- real-model contract tests (T4; llama_cpp pinned in the lock since T5) -----
-
-
 @pytest.fixture(scope="module")
 def embedder() -> Embedder:
     e = Embedder(cache_dir=CACHE_DIR)

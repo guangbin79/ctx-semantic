@@ -138,6 +138,15 @@ uv sync --extra cuda
 echo "installing materialized wheel: $WHEEL"
 uv pip install -q --python .venv/bin/python "$WHEEL"
 
+# F3: an interrupted sync can leave the venv with cpu-profile content (uv sync
+# strips the cuda wheel on re-run) and a retry does not self-heal — assert the
+# cuda GPU lib actually landed before continuing.
+LIBS=""
+for d in .venv/lib/python3*/site-packages/llama_cpp.libs; do [ -d "$d" ] && LIBS="$d"; done
+ls "$LIBS"/libggml-cuda* >/dev/null 2>&1 || {
+    echo "FAIL: cuda install incomplete — libggml-cuda missing (interrupted sync poisons retries; re-run ./scripts/uv-sync.sh --cuda)"
+    exit 1
+}
 # --- host repair of libggml-cpu ---
 LIB=""
 for d in .venv/lib/python3*/site-packages/llama_cpp/lib; do [ -d "$d" ] && LIB="$d"; done
