@@ -1,43 +1,96 @@
 #!/bin/sh
-# uv sync + host repair for llama-cpp-python's CPU kernels.
+# Dual-profile uv sync for llama-cpp-python (SHAPE=1: pyproject extras
+# cpu/cuda). No argument = CPU default profile; --cuda = opt-in CUDA profile.
 #
-# Why (T1 spike finding, ~/.omo/evidence/ctx-semantic/spike-qwen3-llama-cpp.out):
-# the pinned cu124 prebuilt wheel's libggml-cpu.so was compiled with
-# -march native on Zen4 CI runners and executes AVX-VNNI (VEX vpdpbusd) —
+# CPU default: `uv sync --extra cpu` pulls the ~24MB manylinux cpu wheel from
+# abetlen's cpu index — no CUDA libs, no cmake, imports with no
+# LD_LIBRARY_PATH (spike-cpu-wheel.out, cpu-wheel-verdict=OK). The sdist
+# CMAKE fallback branch is consciously omitted: the SIGILL trigger below is
+# false for the cpu wheel. Reintroduce it only if a future cpu wheel SIGILLs
+# (CMAKE_ARGS="-DGGML_CUDA=off" uv pip install --no-binary llama-cpp-python).
+#
+# CUDA profile: the pinned cu124 prebuilt wheel's libggml-cpu.so was compiled
+# with -march native on Zen4 CI runners and executes AVX-VNNI (VEX vpdpbusd) —
 # SIGILL on this host's i7-11800H (Tiger Lake). The GPU kernels
-# (libggml-cuda.so) are unaffected. Fix: after uv sync, rebuild libggml-cpu
-# from the SAME 0.3.35 sdist on THIS host with GGML_CUDA=OFF and swap it in.
-# A full CUDA source build is not possible here: pip's nvidia nvcc wheels
-# ship only ptxas + headers, no nvcc.
+# (libggml-cuda.so) are unaffected. Fix: after installing the wheel, rebuild
+# libggml-cpu from the SAME 0.3.35 sdist on THIS host with GGML_CUDA=OFF and
+# swap it in. A full CUDA source build is not possible here: pip's nvidia
+# nvcc wheels ship only ptxas + headers, no nvcc.
 #
-# The script also materializes the wheel itself: uv cannot range-read GitHub
+# The script also materializes the cuda wheel: uv cannot range-read GitHub
 # release assets (falls back to streaming the whole 1.7GB single-stream,
 # ~0.4MB/s on this host), but curl -r against the same signed-redirect URL
 # works, so the fetch is 16 parallel ranged chunks + sha256 verification.
+# The wheel is then installed imperatively (uv pip install) after
+# `uv sync --extra cuda`: the lock records the cuda path arm as a
+# requires-dist mapping only, so the sync itself never installs it (see the
+# inline comment at the install step).
 #
-# Bump contract: WHEEL_URL + WHEEL_SHA256 + SDIST_SHA256 here, the
-# [tool.uv.sources] path pin in pyproject.toml, and uv.lock move together.
-# WHEEL/VER/SDIST below are DERIVED from the pyproject pin (single source of
-# truth — an env-var override here could fetch to a place uv never reads).
+# Bump contract: when bumping llama-cpp-python, bump BOTH constant blocks
+# below together — CPU_WHEEL_URL/_SHA256/_BYTES and WHEEL_URL/_SHA256 +
+# SDIST_SHA256 — plus the ==0.3.35 version pins in pyproject.toml
+# [project.optional-dependencies] and uv.lock. The script constants are the
+# pin source of truth: the cpu constants document what the abetlen index must
+# serve (uv resolves the cpu profile via the index), the cuda constants drive
+# the ranged fetch + sha256 verify exactly as before.
 set -eu
 cd "$(dirname "$0")/.."
 
+# --- cpu profile constants (documented pin; the abetlen cpu index serves
+# this exact wheel — spike-cpu-wheel.out) ---
+CPU_WHEEL_URL=https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.35/llama_cpp_python-0.3.35-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+CPU_WHEEL_SHA256=d172f3d3c8cdd194c3c47c71cb077ed6e61354a2d0f939ceeac0c8fd29999596
+CPU_WHEEL_BYTES=23912624
+
+# --- cuda profile constants (drive the materialize + sha256 gate below) ---
 WHEEL_URL=https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.35-cu124/llama_cpp_python-0.3.35-py3-none-manylinux_2_35_x86_64.whl
 WHEEL_SHA256=62fc788a4ecee5a579f40708ccfe0c4d566dd5c9959497bdc0544dbba94d82aa
 SDIST_SHA256=1139dbb54509074b70893fab8554e3b079aa9f4d312058ce4018ef0019e3de12
 
-WHEEL=$(grep -E '^llama-cpp-python[[:space:]]*=' pyproject.toml | grep -o '"[^"]*\.whl"' | tr -d '"')
-[ -n "$WHEEL" ] || { echo "FAIL: cannot read llama-cpp-python pin from pyproject.toml"; exit 1; }
-WHEEL_DIR=$(dirname "$WHEEL")
-VER=$(basename "$WHEEL" | cut -d- -f2)
-[ -n "$VER" ] || { echo "FAIL: cannot parse version from $(basename "$WHEEL")"; exit 1; }
-[ "$(basename "$WHEEL")" = "$(basename "$WHEEL_URL")" ] || {
-    echo "FAIL: pyproject pin ($(basename "$WHEEL")) and WHEEL_URL ($(basename "$WHEEL_URL")) disagree — bump contract broken"
-    exit 1
-}
-SDIST="$WHEEL_DIR/llama_cpp_python-$VER.tar.gz"
+case "${1:-}" in
+    "")     MODE=cpu ;;
+    --cuda) MODE=cuda ;;
+    *)      echo "usage: $0 [--cuda]  (no argument = cpu default profile)"; exit 2 ;;
+esac
 
-mkdir -p "$WHEEL_DIR"
+WHEEL="models/wheels/$(basename "$WHEEL_URL")"
+VER=$(basename "$WHEEL_URL" | cut -d- -f2)
+SDIST="models/wheels/llama_cpp_python-$VER.tar.gz"
+
+# Embedded import self-check. Runs after sync in both profiles. The cuda arm
+# preloads the nvidia-wheel libs via the embedder's own discovery/CDLL
+# machinery: the cu124 wheel dlopens libcudart at import, so a bare import
+# cannot succeed in-process without the preload (embedder.py; LD_LIBRARY_PATH
+# is deliberately not used anywhere in this script).
+probe() {
+    if [ "$MODE" = cpu ]; then
+        v=$(uv run --no-sync python -c 'import llama_cpp; print(llama_cpp.__version__)') || {
+            echo "FAIL: cpu import probe could not import llama_cpp"; exit 1; }
+    else
+        v=$(uv run --no-sync python -c '
+import ctypes
+from ctx_semantic.embedder import _find_nvidia_libs
+libs = _find_nvidia_libs()
+missing = [k for k, p in libs.items() if p is None]
+assert not missing, "nvidia wheel libs missing after sync: %s" % missing
+for p in libs.values():
+    ctypes.CDLL(str(p), mode=ctypes.RTLD_GLOBAL)
+import llama_cpp
+print(llama_cpp.__version__)
+') || { echo "FAIL: cuda import probe failed (traceback above)"; exit 1; }
+    fi
+    [ "$v" = "0.3.35" ] || { echo "FAIL: import probe got '$v', want 0.3.35"; exit 1; }
+    echo "self-check OK: llama_cpp 0.3.35 imports with no LD_LIBRARY_PATH ($MODE profile)"
+}
+
+if [ "$MODE" = cpu ]; then
+    uv sync --extra cpu
+    probe
+    exit 0
+fi
+
+# --- cuda profile: materialize the wheel (ranged fetch + verify) ---
+mkdir -p models/wheels
 if ! echo "$WHEEL_SHA256  $WHEEL" | sha256sum -c --status 2>/dev/null; then
     echo "fetching wheel (16-way ranged GET): $WHEEL_URL"
     size=$(curl -sIL "$WHEEL_URL" | awk 'tolower($1)=="content-length:"{l=$2} END{print l}' | tr -d "\r")
@@ -74,7 +127,16 @@ if ! echo "$WHEEL_SHA256  $WHEEL" | sha256sum -c --status 2>/dev/null; then
     echo "$WHEEL_SHA256  $WHEEL" | sha256sum -c || exit 1
 fi
 
-uv sync "$@"
+uv sync --extra cuda
+
+# The lock records the cuda path arm as a requires-dist mapping only — uv
+# never reads path-wheel METADATA at lock time, so there is no [[package]]
+# entry and `uv sync --extra cuda` silently skips the wheel itself (it only
+# installs the nvidia wheels + base/dev). Install the verified wheel
+# imperatively, after sync (a later sync would strip it — same order rule
+# as the repair step).
+echo "installing materialized wheel: $WHEEL"
+uv pip install -q --python .venv/bin/python "$WHEEL"
 
 # --- host repair of libggml-cpu ---
 LIB=""
@@ -85,6 +147,7 @@ MARKER="$LIB/.host-cpu-lib.sha256"
 cur=$(sha256sum "$LIB/libggml-cpu.so" | cut -d" " -f1)
 if [ -f "$MARKER" ] && [ "$cur" = "$(head -1 "$MARKER" | cut -d' ' -f1)" ]; then
     echo "libggml-cpu already host-built (sha256 $cur)"
+    probe
     exit 0
 fi
 
@@ -122,3 +185,5 @@ for so in "$SRC"/libggml-cpu.so*; do
 done
 sha256sum "$LIB"/libggml-cpu.so* | tee "$MARKER"
 echo "repair done: wheel GPU libs + host CPU kernels"
+
+probe
