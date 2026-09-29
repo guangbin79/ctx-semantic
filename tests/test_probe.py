@@ -11,9 +11,9 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from test_dbadapter import make_fixture
 
 from ctx_semantic import probe
-from test_dbadapter import make_fixture
 
 
 def test_probe_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys):

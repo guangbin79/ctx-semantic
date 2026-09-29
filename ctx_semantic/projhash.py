@@ -34,7 +34,6 @@ import hashlib
 import os
 import re
 import time
-
 from pathlib import Path
 
 CONTENT_DIR = Path.home() / ".config" / "opencode" / "context-mode" / "content"
