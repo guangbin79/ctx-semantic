@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 MODEL_NAME: Final = "qwen/qwen3-embedding-0.6b-gguf-q8"  # vectors-store key
 DIM: Final = 1024  # re-asserted from live output at load
 DEFAULT_CACHE_DIR: Final = Path.home() / "ctx-semantic" / "models"
-GGUF_PATH: Final = DEFAULT_CACHE_DIR / "Qwen3-Embedding-0.6B-Q8_0.gguf"
+GGUF_NAME: Final = "Qwen3-Embedding-0.6B-Q8_0.gguf"
 QUERY_INSTRUCT: Final = (
     "Given a web search query, retrieve relevant passages that answer the query"
 )
@@ -99,7 +99,7 @@ class Embedder:
     """
 
     def __init__(self, cache_dir: str | os.PathLike[str] = DEFAULT_CACHE_DIR) -> None:
-        self.cache_dir = Path(cache_dir)
+        self._gguf_path = Path(cache_dir) / GGUF_NAME
         self._device: str | None = None
         self._model = None
 
@@ -114,7 +114,7 @@ class Embedder:
         import llama_cpp
 
         return llama_cpp.Llama(
-            model_path=str(GGUF_PATH),
+            model_path=str(self._gguf_path),
             embedding=True,
             n_gpu_layers=-1 if use_gpu else 0,
             pooling_type=llama_cpp.LLAMA_POOLING_TYPE_LAST,
