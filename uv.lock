@@ -385,8 +385,8 @@ requires-dist = [
     { name = "llama-cpp-python", path = "/home/guangbin/ctx-semantic/models/wheels/llama_cpp_python-0.3.35-py3-none-manylinux_2_35_x86_64.whl" },
     { name = "mcp" },
     { name = "numpy" },
-    { name = "nvidia-cublas-cu12" },
-    { name = "nvidia-cuda-runtime-cu12" },
+    { name = "nvidia-cublas-cu12", specifier = "==12.9.*" },
+    { name = "nvidia-cuda-runtime-cu12", specifier = "==12.9.*" },
 ]
 
 [package.metadata.requires-dev]

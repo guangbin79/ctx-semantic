@@ -19,8 +19,11 @@ dependencies = [
     # wheels at runtime (ldd, spike-qwen3-llama-cpp phase 7; run.sh exports
     # their lib dirs). Previously transitive via onnxruntime-gpu[cuda,cudnn];
     # now explicit. nvidia-cuda-nvrtc-cu12 arrives transitively with cublas.
-    "nvidia-cuda-runtime-cu12",
-    "nvidia-cublas-cu12",
+    # Pinned to the 12.9 minor — the set the spike verified; uv.lock freezes
+    # exact versions, but a floating minor would drift the tested runtime
+    # on re-lock while the llama-cpp wheel stays fixed at its cu124 build.
+    "nvidia-cuda-runtime-cu12==12.9.*",
+    "nvidia-cublas-cu12==12.9.*",
 ]
 
 [dependency-groups]
