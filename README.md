@@ -41,13 +41,9 @@ print(MODEL_NAME, e.device)
 
 ## Environment notes
 
-- HF downloads in this network need: `HF_ENDPOINT=https://hf-mirror.com`,
-  `HF_HUB_DISABLE_XET=1` (mirror cannot serve the Xet CAS protocol), and no
-  `all_proxy` (its `socks://` scheme is rejected by httpx; `https_proxy=http://…` is fine).
 - GPU inference needs the nvidia-wheel lib dirs on LD_LIBRARY_PATH — `run.sh`
   sets this up automatically.
 
-```
 
 ## Testing
 

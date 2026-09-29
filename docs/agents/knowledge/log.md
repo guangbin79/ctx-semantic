@@ -15,3 +15,7 @@
 ## [2026-09-28] ingest | embedding-model
 - 嵌入模型迁移 jina-v2-base-zh → qwen/qwen3-embedding-0.6b-gguf-q8（llama-cpp-python CUDA）：同库同 CASES 重生基线 A/B hybrid 8/12→10/12、rescues 2→4、三门禁双 PASS；fastembed 0.7.4/0.8.1 实测无 Qwen，留守路线不通
 - Types: Decision, Archive
+
+## [2026-09-29] ingest | embedding-model
+- 迁移后评审待办落实：CASES 重采样对齐活语料（75 chunks，第三次 purge 后）恢复召回门禁可运行；uv-sync.sh 加固（WHEEL/VER 派生自 pyproject 钉、glob 守卫、原子 rename 换库、sdist sha256 三钉、分片长度校验）；embedder cache_dir 参数恢复生效；nvidia 轮钉 12.9.*；旧 qwen3 A/B 基线存档 recall-report-qwen3-baseline-20260928.md
+- Types: Decision, Module Info
