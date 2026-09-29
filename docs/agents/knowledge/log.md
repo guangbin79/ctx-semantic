@@ -23,3 +23,7 @@
 ## [2026-09-29] ingest | embedding-model
 - 全仓深审（5 路全 PASS）后修复落实：README 探针 2 补 LD 前缀（import llama_cpp 即需 CUDA 库）；prune 兼清退役模型键行（单模型存储设计）；warmup --all/--db 逐库容错（FAIL 行+非零退出，不再因一个漂移库中止）；run.sh 改脚本相对 CTX_DIR + paste 拼接（去尾随冒号）；projhash realpath 分歧入文档；_append_filters 显式组合；零范数守卫对齐；binding ChunkRow 改导入；运行态 QA 残渣（120 行 /tmp 语料）已 prune
 - Types: Decision, Module Info
+
+## [2026-09-29] ingest | embedding-model
+- 可移植性收口：[tool.uv.sources] 轮钉改仓内相对路径（models/wheels/，uv.lock 同步相对化，任意 clone 位置 uv-sync.sh 全链自洽）；新增 docs/INSTALL.md 固定安装参考（前置/资产/修复原理/验证/MCP 注册/排障/升版契约），README Setup 挂链
+- Types: Decision, Module Info

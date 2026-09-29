@@ -14,12 +14,16 @@ subprocess (`run.sh`), no daemon.
 ## Setup
 
 ```sh
-cd ~/ctx-semantic
-./scripts/uv-sync.sh       # uv sync + llama-cpp wheel fetch + host CPU-lib repair
+git clone git@github.com:guangbin79/ctx-semantic.git   # any location
+cd ctx-semantic
+./scripts/uv-sync.sh       # wheel fetch + sha256 verify + uv sync + host CPU-lib repair
 ```
 
+Plus the one manual asset (GGUF model) — full prerequisites, asset table,
+MCP registration, and troubleshooting: **[docs/INSTALL.md](docs/INSTALL.md)**.
+
 Entry point: `./run.sh` (executes `python -m ctx_semantic.server` inside the
-uv environment).
+uv environment; script-relative, works from any checkout).
 
 ## Verification probes
 
