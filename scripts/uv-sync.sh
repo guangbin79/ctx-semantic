@@ -141,9 +141,12 @@ uv pip install -q --python .venv/bin/python "$WHEEL"
 # F3: an interrupted sync can leave the venv with cpu-profile content (uv sync
 # strips the cuda wheel on re-run) and a retry does not self-heal — assert the
 # cuda GPU lib actually landed before continuing.
-LIBS=""
-for d in .venv/lib/python3*/site-packages/llama_cpp.libs; do [ -d "$d" ] && LIBS="$d"; done
-ls "$LIBS"/libggml-cuda* >/dev/null 2>&1 || {
+CUDA_LIB=""
+for g in .venv/lib/python3*/site-packages/llama_cpp/lib/libggml-cuda* \
+         .venv/lib/python3*/site-packages/llama_cpp_python.libs/libggml-cuda*; do
+    [ -e "$g" ] && CUDA_LIB="$g" && break
+done
+[ -n "$CUDA_LIB" ] || {
     echo "FAIL: cuda install incomplete — libggml-cuda missing (interrupted sync poisons retries; re-run ./scripts/uv-sync.sh --cuda)"
     exit 1
 }
