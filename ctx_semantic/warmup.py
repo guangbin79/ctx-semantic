@@ -7,7 +7,8 @@ Usage:
 through projhash (same chain as the server: $CTX_SEMANTIC_DB >
 $OPENCODE_PROJECT_DIR > the given dir); --all scans every content DB under
 ~/.config/opencode/context-mode/content/; --prune deletes stored vector
-rows whose source DB no longer exists on disk (no model load). With no
+rows whose source DB no longer exists on disk, plus rows left under
+retired model keys (no model load). With no
 flag the current project (cwd chain) is warmed. Run BEFORE registering the
 server with opencode (T8 gate) so the first real query is model-load-only.
 
@@ -47,9 +48,13 @@ def warm_one(db: Path, embedder: Embedder) -> dict[str, int]:
 
 
 def prune(store_path: Path | None = None) -> dict[str, int]:
-    """Delete vector rows whose source db_path no longer exists on disk.
+    """Delete vector rows whose source db_path no longer exists on disk,
+    plus rows stored under any model key other than the current
+    vectors.DEFAULT_MODEL — model migrations left them behind and nothing
+    else ever re-reads them (the store is single-model by design).
 
-    Returns {dead db_path: removed row count}; prints per-path counts.
+    Returns {dead db_path: removed row count}; prints per-path and
+    stale-model counts.
     """
     con = vectors.connect(store_path)
     try:
@@ -65,14 +70,19 @@ def prune(store_path: Path | None = None) -> dict[str, int]:
                 removed[p] = con.execute(
                     "DELETE FROM embeddings WHERE db_path=?", (p,)
                 ).rowcount
+        stale_models = con.execute(
+            "DELETE FROM embeddings WHERE model != ?", (vectors.DEFAULT_MODEL,)
+        ).rowcount
         con.commit()
     finally:
         con.close()
     for p, n in removed.items():
         print(f"pruned {n} rows (dead db_path): {p}")
+    if stale_models:
+        print(f"pruned {stale_models} rows (stale model key != {vectors.DEFAULT_MODEL})")
     print(
         f"prune: removed {sum(removed.values())} rows across {len(removed)} dead paths"
-        f" ({len(paths) - len(removed)} live paths kept)"
+        f" ({len(paths) - len(removed)} live paths kept), {stale_models} stale-model rows"
     )
     return removed
 
@@ -90,7 +100,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     group.add_argument(
         "--prune", action="store_true",
-        help="remove vector rows whose source content DB no longer exists",
+        help="remove vector rows whose source content DB no longer exists,"
+        " plus rows under retired model keys",
     )
     args = parser.parse_args(argv)
 
@@ -110,10 +121,15 @@ def main(argv: list[str] | None = None) -> int:
     if not dbs:
         print(f"no content DBs under {projhash.CONTENT_DIR}")
     embedder = Embedder()
+    failures = 0
     for db in dbs:
-        warm_one(db, embedder)
+        try:
+            warm_one(db, embedder)
+        except Exception as exc:  # noqa: BLE001 — one drifted DB must not abort the rest
+            failures += 1
+            print(f"FAIL {db}: {type(exc).__name__}: {exc}")
     print(f"model={MODEL_NAME} device={embedder.device}")
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

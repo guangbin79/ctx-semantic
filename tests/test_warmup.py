@@ -323,3 +323,61 @@ def test_main_prune_conflicts_with_db(tmp_path: Path):
     with pytest.raises(SystemExit) as exc:
         warmup.main(["--prune", "--db", str(tmp_path / "any.db")])
     assert exc.value.code == 2
+
+
+def test_prune_also_removes_stale_model_rows(tmp_path: Path, capsys):
+    # Model migrations leave rows under retired model keys; prune drops
+    # them alongside dead db_paths — the store is single-model by design.
+    live = tmp_path / "live.db"
+    live.write_bytes(b"x")
+    store = tmp_path / "v.db"
+    seed_store(store, {str(live): 2})
+    con = vectors.connect(store)
+    try:
+        con.execute(
+            "INSERT INTO embeddings(db_path, chunk_rowid, model, content_hash,"
+            " dim, vec, embedded_at) VALUES(?,?,?,?,?,?,?)",
+            (str(live), 1, "jinaai/jina-embeddings-v2-base-zh", "x", 4, b"\x00" * 16, 0.0),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    removed = warmup.prune(store)
+
+    assert removed == {}  # live path kept
+    out = capsys.readouterr().out
+    assert "1 stale-model rows" in out
+    con = vectors.connect(store)
+    try:
+        assert con.execute("SELECT count(*) FROM embeddings").fetchone()[0] == 2
+        models = {r[0] for r in con.execute("SELECT DISTINCT model FROM embeddings")}
+        assert models == {vectors.DEFAULT_MODEL}
+    finally:
+        con.close()
+
+
+def test_main_all_continues_past_bad_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sync_stub, capsys
+):
+    # A schema-drifted DB in the content dir must not abort warming the rest:
+    # the good DBs still warm, the failure is reported, and exit is nonzero.
+    calls, _ = sync_stub
+    content = tmp_path / "content"
+    content.mkdir()
+    make_db(content / "a-good.db")
+    bad = content / "b-bad.db"
+    con_rw = sqlite3.connect(bad)
+    con_rw.execute(
+        "CREATE TABLE sources (id INTEGER PRIMARY KEY, label TEXT)"
+    )  # chunks tables missing entirely -> SchemaDrift on open
+    con_rw.commit()
+    con_rw.close()
+    monkeypatch.setattr(projhash, "CONTENT_DIR", content)
+
+    code = warmup.main(["--all"])
+
+    assert code == 1  # failure surfaces loudly…
+    assert [Path(c[2]).name for c in calls] == ["a-good.db"]  # …after the good DB warmed
+    out = capsys.readouterr().out
+    assert "FAIL" in out and "b-bad.db" in out and "SchemaDrift" in out
