@@ -1,5 +1,5 @@
 # local model + data artifacts
-models/
+models
 data/
 
 # python
