@@ -39,12 +39,23 @@ marker fast path.
 |---|---|---|
 | cu124 wheel (1.7 GB) | `<repo>/models/wheels/` | auto-fetched + sha256-verified by `uv-sync.sh` |
 | sdist tarball | `<repo>/models/wheels/` | auto-fetched + sha256-verified by `uv-sync.sh` |
-| GGUF model (639 MB) | `~/ctx-semantic/models/Qwen3-Embedding-0.6B-Q8_0.gguf` | one-time manual copy/download (HF `qwen/qwen3-embedding-0.6b-gguf`, Q8_0). sha256 recorded in `~/.omo/evidence/ctx-semantic/spike-qwen3-llama-cpp.out` — verify against it; the repo itself does NOT pin the GGUF hash |
+| GGUF model (639 MB) | `~/ctx-semantic/models/Qwen3-Embedding-0.6B-Q8_0.gguf` (exact filename — the loader opens it by name) | one-time fetch, see snippet below. sha256 pinned in-repo: `06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439` |
 | vector store | `~/ctx-semantic/data/vectors.db` | optional; created on demand, deletion = safe full rebuild |
 
 Note the split: the wheel is per-checkout (repo-relative pin), the GGUF is
 home-anchored (`~/ctx-semantic/models`, shared across checkouts — matches
 `embedder.DEFAULT_CACHE_DIR`).
+
+Fetching the GGUF (HF repo file is lowercase — rename to the exact name in the table):
+
+```sh
+HF_ENDPOINT=https://hf-mirror.com huggingface-cli download \
+    Qwen/Qwen3-Embedding-0.6B-GGUF qwen3-embedding-0.6b-q8_0.gguf --local-dir /tmp/gguf
+mv /tmp/gguf/qwen3-embedding-0.6b-q8_0.gguf ~/ctx-semantic/models/Qwen3-Embedding-0.6B-Q8_0.gguf
+echo "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439  ~/ctx-semantic/models/Qwen3-Embedding-0.6B-Q8_0.gguf" | sha256sum -c
+```
+
+(direct huggingface.co works too when the mirror is unnecessary; `HF_ENDPOINT` and no `all_proxy` is the verified combo on this network)
 
 ## Why the repair step runs on every host
 
