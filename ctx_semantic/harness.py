@@ -9,8 +9,10 @@ the gold chunk's ROWID appears in the top-5 — chunk identity, never title
 substrings.
 
 Corpus: resampled 2026-09-29 from the live content DB (0ef2d5f23b410348;
-75 chunks at resample time — the live corpus churns; the report prints the
-current count) — the 2026-09-28 corpus (400 chunks) was purged by another
+199 chunks at the second same-day resample — the DB was re-indexed with
+web-scraped hooks/agent-loop/skills content and the 75-chunk corpus of the
+first resample is gone; the live corpus churns, the report prints the
+current count. The 2026-09-28 corpus (400 chunks) was purged by another
 context-mode re-index, and the 2026-09-21 corpus (53883986ad0936d4) before
 it; older baseline reports live on in the same evidence dir.
 
@@ -54,45 +56,46 @@ VEC_K = 20  # max(4*TOP_K, 20) — hybrid.search's vector-leg width
 REPORT_PATH = Path.home() / ".omo" / "evidence" / "ctx-semantic" / "recall-report.md"
 
 # (query, lang, gold_rowid, gold_title) — paraphrases authored 2026-09-29
-# from a read-only sample of the live content DB (0ef2d5f23b410348,
-# review-loop investigation corpus); every case was probed through the
-# real T7 ranking path before being pinned here. zh queries are spaceless
-# CJK: unicode61 tokenizes each as ONE token no chunk contains, so the
-# BM25 leg is empty by construction and the vector leg must carry it.
+# from a read-only sample of the live content DB (0ef2d5f23b410348;
+# second same-day resample, 199-chunk hooks/agent-loop/skills corpus);
+# every case was probed through the real T7 ranking path before being
+# pinned here. zh queries are spaceless CJK: unicode61 tokenizes each as
+# ONE token no chunk contains, so the BM25 leg is empty by construction
+# and the vector leg must carry it.
 # gold_title guards rowid drift: the harness aborts (exit 2) if the rowid
 # no longer holds the recorded chunk — re-sample when the live corpus
-# churns (purges: 2026-09-21 → 09-28 → 09-29).
+# churns (purges: 2026-09-21 → 09-28 → 09-29 twice).
 CASES: list[tuple[str, str, int, str]] = [
     # --- zh: spaceless-CJK paraphrases (BM25 leg empty by construction) ---
-    ("改动很小的时候能不能免掉最后一道整体验收", "zh", 8,
-     "开发完成自动评审循环（review-loop） > 判据 > 终闸条件与 Trivial 豁免"),
-    ("一轮修复循环里各种检查最多叠几层总次数封顶是多少", "zh", 10,
-     "开发完成自动评审循环（review-loop） > 判据 > 轮次预算分配优先级"),
-    ("修不完还剩严重问题时要不要继续自动跑下去该找谁决定", "zh", 12,
-     "开发完成自动评审循环（review-loop） > 判据 > 超限上报"),
-    ("两个进程同时抢同一个完成信号怎样防止重复消费", "zh", 16,
-     "开发完成自动评审循环（review-loop） > 判据 > 交接原子性与交付语义 (2026-09-27)"),
-    ("上下文被压缩之后进行到第几轮应该以什么记录为准", "zh", 20,
-     "开发完成自动评审循环（review-loop） > ⑫ 上下文检查点（压缩免疫）"),
-    ("无界面一次性运行时插件异步收尾为什么总是被掐断", "zh", 59,
-     "opencode run headless 销毁窗口 vs 插件 idle-handler 尾段竞态 > Root Cause"),
+    ("钩子触发的四个时机在工具运行前后怎么划分", "zh", 99,
+     "Building a Zero-Touch Code Review Environment with Claude Code Hooks > Understanding When Hooks Fire"),
+    ("读取上下文检测变更文件再请求评审的那个脚本", "zh", 100,
+     "Building a Zero-Touch Code Review Environment with Claude Code Hooks > The Review Script"),
+    ("会话结束时用什么钩子自动生成总结报告", "zh", 101,
+     "Building a Zero-Touch Code Review Environment with Claude Code Hooks > Generating Session Reports with Stop Hooks"),
+    ("调用前拦截钩子用退出码阻断时有什么坑", "zh", 102,
+     "Building a Zero-Touch Code Review Environment with Claude Code Hooks > The Gotcha with PreToolUse Blockers"),
+    ("把校验器输出变成下一轮提示帮助智能体收敛到绿", "zh", 88,
+     "agentsop-test-fix-loop > SYSTEM DOCUMENTATION & REQUIREMENTS > What problem does it solve?"),
+    ("免人工看护的评审修复循环给智能体带来哪些好处", "zh", 76,
+     "Iterate Until Clean: Autonomous Skill Fix Loop > Why agents benefit"),
     # --- en: lexical overlap present — BM25 leg non-empty, RRF fused ---
     # (FTS5 MATCH is an implicit AND of all tokens, so these are authored
     #  with tokens that co-occur in the gold chunk.)
-    ("commit then idle block porcelain", "en", 67,
-     "S1 commit-then-idle   主杀场景：编辑+提交后 idle（老插件 gate=porcelain 必 BLOCK）→ 必须注入"),
-    ("s4 omo edits block", "en", 70,
-     "S4 .omo 噪声           仅写 .omo 路径 → gate=edits BLOCK，不得注入"),
-    ("tmux tui plugin-debug log", "en", 74,
-     "驱动：tmux TUI + REVIEW_LOOP_DEBUG=1；断言 plugin-debug.log 闸门行 + git 状态 + flag 生命周期"),
-    ("opencode.log review-loop grep tail", "en", 40,
-     "主日志 9-28晚至今天 review-loop 行"),
+    ("zero touch code review environment", "en", 98,
+     "Building a Zero-Touch Code Review Environment with Claude Code Hooks"),
+    ("hooks live settings project scope", "en", 103,
+     "Building a Zero-Touch Code Review Environment with Claude Code Hooks > Scope: User vs. Project"),
+    ("verify fix loop converges passing lint", "en", 86,
+     "agentsop-test-fix-loop"),
+    ("create basic skill folder", "en", 47,
+     "Creating a Basic Skill"),
     # --- mixed zh+en: Latin token present, but the spaceless CJK run makes the
     # implicit-AND MATCH unsatisfiable → BM25 leg empty, vector carries it ---
-    ("flag 消费之后为什么会话被封口", "mixed", 71,
-     "S5 flag 消费+会话封口  S1 注入后：flag 被删；再 idle → injected.has BLOCK"),
-    ("dotfiles 插件提交历史全列表怎么查", "mixed", 43,
-     "插件提交历史全列表"),
+    ("trail of bits 注册表装技能到工作流", "mixed", 81,
+     "Iterate Until Clean: Autonomous Skill Fix Loop > Add it to your agent workflow"),
+    ("opencode 插件命令目录靠符号链接生效", "mixed", 143,
+     "target-files-existence"),
 ]
 
 
