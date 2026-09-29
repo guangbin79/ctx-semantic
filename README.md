@@ -27,7 +27,9 @@ uv environment).
 # FTS5 available in the venv
 uv run python -c "import sqlite3; con=sqlite3.connect(':memory:'); con.execute('CREATE VIRTUAL TABLE t USING fts5(x)')"
 
-# llama-cpp-python pinned version
+# llama-cpp-python pinned version (import dlopens the CUDA libs — needs the
+# nvidia lib dirs on LD_LIBRARY_PATH, like the probe below)
+LD_LIBRARY_PATH="$(find .venv/lib -type d -name lib -path '*nvidia/*' | tr '\n' ':')" \
 uv run python -c "import llama_cpp; print(llama_cpp.__version__)"
 
 # embedding model loads and embeds on GPU (nvidia wheel libs on LD_LIBRARY_PATH)
