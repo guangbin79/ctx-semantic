@@ -86,7 +86,10 @@ def open_db(path: str | Path) -> sqlite3.Connection:
     """Open a context-mode content DB strictly read-only.
 
     Retries transient open failures (SQLITE_CANTOPEN / SQLITE_READONLY_
-    RECOVERY during WAL/-shm races) up to MAX_ATTEMPTS. Raises
+    RECOVERY during WAL/-shm races) up to MAX_ATTEMPTS. The open path
+    retries ANY OperationalError (connect failures are a narrow
+    SQLITE_CANTOPEN class); query paths retry only locked/busy — see
+    _with_retry. Raises
     FileNotFoundError with a clear message when the file is absent, and
     SchemaDrift when tables/columns don't match the expected layout.
     """
@@ -135,7 +138,7 @@ def _append_filters(
         sql += " JOIN sources AS s ON s.id = c.source_id WHERE s.label = ?"
         params.append(source_filter)
     if content_type is not None:
-        sql += " WHERE " if "WHERE" not in sql else " AND "
+        sql += " AND " if source_filter is not None else " WHERE "
         sql += "c.content_type = ?"
         params.append(content_type)
     return sql, params

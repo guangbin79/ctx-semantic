@@ -83,9 +83,10 @@ def _pid_vram_on_gpu(pid: int) -> str | None:
 
 def _l2_normalized(mat: npt.NDArray[np.floating]) -> npt.NDArray[np.float32]:
     """Cast to float32 and L2-normalize rows (raw embeddings arrive float64
-    and near-unit norm; the cast can perturb them by ~1e-7)."""
+    and near-unit norm; the cast can perturb them by ~1e-7). 1e-12 zero-
+    guard matches vectors._load_matrix — unreachable for real model output,"""
     m = mat.astype(np.float32)
-    return m / np.linalg.norm(m, axis=1, keepdims=True)
+    return m / np.maximum(np.linalg.norm(m, axis=1, keepdims=True), 1e-12)
 
 
 class Embedder:
@@ -182,6 +183,9 @@ class Embedder:
         except Exception as exc:
             if self._device != "cuda":
                 raise
+            # ponytail: CPU retry re-embeds the whole todo from batch 0 —
+            # worst case doubles a large cold sync's embed time, at most
+            # once per process; checkpoint remaining batches if it bites.
             self._rebuild_on_cpu(exc)
             mat = self._embed_all(texts)
         return _l2_normalized(mat)

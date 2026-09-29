@@ -17,8 +17,7 @@ import sqlite3
 from collections.abc import Iterable
 
 from ctx_semantic import dbadapter
-
-ChunkRow = tuple[int, str, str, int, str, str | None]
+from ctx_semantic.dbadapter import ChunkRow
 
 
 class BoundAdapter:

@@ -16,7 +16,7 @@
 - **Alternatives:** 留守 fastembed——实测 0.7.4 共 28 模型与上游 0.8.1 官方文档站均无任何 Qwen，等待收录路线不通
 - **Reason:**
     - llama-cpp-python 为 C 绑定，不破无-torch 轻量 sidecar 架构
-    - 中文+代码检索双强：jina hybrid 8/12 vs qwen3 10/12，rescues 2→4，三门禁双 PASS（recall-report.md 对比节）
+    - 中文+代码检索双强：jina hybrid 8/12 vs qwen3 10/12，rescues 2→4，三门禁双 PASS（A/B 全文见存档 recall-report-qwen3-baseline-20260928.md 与 recall-report-jina-baseline-20260928.md）
     - 与 zvec-grep 同路线，GGUF 资产可复用
 - **Tradeoff:** 自维护 GGUF 分发与 CUDA runtime——cu124 预编译轮 libggml-cpu 本机 SIGILL → scripts/uv-sync.sh 混合安装（轮子 GPU 库 + 本机重建 CPU 核）；1024 维向量体积 +33%；升级路径：fastembed 收录 Qwen 后可回归（实测 0.7.4/0.8.1 均无）
 - **Supersedes:** 2026-09-21 jina-embeddings-v2-base-zh 条目

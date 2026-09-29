@@ -19,3 +19,7 @@
 ## [2026-09-29] ingest | embedding-model
 - 迁移后评审待办落实：CASES 重采样对齐活语料（75 chunks，第三次 purge 后）恢复召回门禁可运行；uv-sync.sh 加固（WHEEL/VER 派生自 pyproject 钉、glob 守卫、原子 rename 换库、sdist sha256 三钉、分片长度校验）；embedder cache_dir 参数恢复生效；nvidia 轮钉 12.9.*；旧 qwen3 A/B 基线存档 recall-report-qwen3-baseline-20260928.md
 - Types: Decision, Module Info
+
+## [2026-09-29] ingest | embedding-model
+- 全仓深审（5 路全 PASS）后修复落实：README 探针 2 补 LD 前缀（import llama_cpp 即需 CUDA 库）；prune 兼清退役模型键行（单模型存储设计）；warmup --all/--db 逐库容错（FAIL 行+非零退出，不再因一个漂移库中止）；run.sh 改脚本相对 CTX_DIR + paste 拼接（去尾随冒号）；projhash realpath 分歧入文档；_append_filters 显式组合；零范数守卫对齐；binding ChunkRow 改导入；运行态 QA 残渣（120 行 /tmp 语料）已 prune
+- Types: Decision, Module Info

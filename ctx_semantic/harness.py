@@ -8,8 +8,9 @@ the BM25 leg non-empty so RRF fusion is genuinely exercised). A hit means
 the gold chunk's ROWID appears in the top-5 — chunk identity, never title
 substrings.
 
-Corpus: resampled 2026-09-29 from the live content DB (0ef2d5f23b410348,
-75 chunks) — the 2026-09-28 corpus (400 chunks) was purged by another
+Corpus: resampled 2026-09-29 from the live content DB (0ef2d5f23b410348;
+75 chunks at resample time — the live corpus churns; the report prints the
+current count) — the 2026-09-28 corpus (400 chunks) was purged by another
 context-mode re-index, and the 2026-09-21 corpus (53883986ad0936d4) before
 it; older baseline reports live on in the same evidence dir.
 
@@ -86,7 +87,8 @@ CASES: list[tuple[str, str, int, str]] = [
      "驱动：tmux TUI + REVIEW_LOOP_DEBUG=1；断言 plugin-debug.log 闸门行 + git 状态 + flag 生命周期"),
     ("opencode.log review-loop grep tail", "en", 40,
      "主日志 9-28晚至今天 review-loop 行"),
-    # --- mixed zh+en: Latin token anchors lexical match, vector carries semantics ---
+    # --- mixed zh+en: Latin token present, but the spaceless CJK run makes the
+    # implicit-AND MATCH unsatisfiable → BM25 leg empty, vector carries it ---
     ("flag 消费之后为什么会话被封口", "mixed", 71,
      "S5 flag 消费+会话封口  S1 注入后：flag 被删；再 idle → injected.has BLOCK"),
     ("dotfiles 插件提交历史全列表怎么查", "mixed", 43,

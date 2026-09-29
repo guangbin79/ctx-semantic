@@ -10,7 +10,11 @@ Algorithm (reverse-engineered from context-mode's cli.bundle.mjs — see
 This module additionally applies os.path.realpath() before hashing so symlinked
 and relative inputs resolve to the same hash as the real directory. For inputs
 that are already absolute real paths (e.g. the cwd opencode gives an MCP child
-process) this is byte-identical to context-mode's own yr().
+process) this is byte-identical to context-mode's own yr(). Divergence: for a
+SYMLINKED project dir context-mode hashes the literal path while we hash the
+realpath — two different DB files; that surfaces as a silent "(no results)"
+(the realpath DB is missing/empty), never as corruption. Avoid symlinked
+project roots, or pin the DB explicitly via $CTX_SEMANTIC_DB.
 
 Resolution priority for db_path()/resolve():
     1. CTX_SEMANTIC_DB env var — explicit DB file path, wins over everything.
