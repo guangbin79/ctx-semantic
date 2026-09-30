@@ -176,8 +176,10 @@ uv run --extra cpu python -m ctx_semantic.harness          # recall gates; exit 
 ```
 
 (`--extra cpu` matches the default install; on a cuda-profile install swap in
-`--extra cuda`. A bare `uv sync` — unlike `uv run` — strips the
-extra-installed wheel: always re-run `scripts/uv-sync.sh` instead.)
+`--extra cuda`. Any exact sync — a bare `uv run`/`uv sync`, or an `--extra`
+selection different from the synced state — strips the extra-installed cuda
+wheel: always re-run `scripts/uv-sync.sh` to switch profiles. `run.sh`'s
+cuda arm boots with `--no-sync` and fails fast when the wheel is missing.)
 
 ## Troubleshooting
 
@@ -185,6 +187,7 @@ extra-installed wheel: always re-run `scripts/uv-sync.sh` instead.)
 |---|---|
 | `uv lock`/`uv run`: "path … does not exist" | cu124 wheel not materialized yet — run `scripts/uv-sync.sh --cuda` first (the cpu profile never needs it) |
 | First query on a cuda install fails loud with a dlopen traceback (`libcudart.so.12` / `libcublas*`) | the embedder's ctypes preload found the nvidia wheels missing/broken (e.g. a bare `uv sync` stripped them). Diagnose: `uv run --extra cuda python -c "from ctx_semantic.embedder import _find_nvidia_libs; print(_find_nvidia_libs())"` — any `None` value means that wheel lib is gone → re-run `scripts/uv-sync.sh --cuda`. Cannot happen on a cpu install: there the same failed preload only logs a warning and inference runs on CPU |
+| Server boots, then the FIRST query fails `ModuleNotFoundError: llama_cpp` (cuda profile) | the cuda wheel was stripped by a re-sync (bare `uv run`/`uv sync` or a different `--extra` on this venv). `run.sh`'s cuda arm now fails fast at boot on the missing wheel; older entrypoints surface it at first query (lazy import) — re-run `scripts/uv-sync.sh --cuda` |
 | "preload failed" warning in server logs on the cpu profile | expected, not an error — no nvidia wheels exist on that profile; inference is on CPU |
 | SIGILL in libggml-cpu | cuda profile: repair step was skipped/bypassed (bare `uv sync` relinks the wheel's stock lib) — re-run `scripts/uv-sync.sh --cuda` |
 | `FAIL <db>: SchemaDrift …` from warmup --all | a content DB from an incompatible context-mode version; others still warm, exit 1 |

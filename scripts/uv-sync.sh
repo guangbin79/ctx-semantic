@@ -55,6 +55,9 @@ esac
 
 WHEEL="models/wheels/$(basename "$WHEEL_URL")"
 VER=$(basename "$WHEEL_URL" | cut -d- -f2)
+# bump-contract gate: pyproject extras must pin the same version as WHEEL_URL
+grep -q "llama-cpp-python==$VER" pyproject.toml || {
+    echo "FAIL: pyproject pin != $VER — bump contract broken"; exit 1; }
 SDIST="models/wheels/llama_cpp_python-$VER.tar.gz"
 
 # Embedded import self-check. Runs after sync in both profiles. The cuda arm
@@ -79,8 +82,8 @@ import llama_cpp
 print(llama_cpp.__version__)
 ') || { echo "FAIL: cuda import probe failed (traceback above)"; exit 1; }
     fi
-    [ "$v" = "0.3.35" ] || { echo "FAIL: import probe got '$v', want 0.3.35"; exit 1; }
-    echo "self-check OK: llama_cpp 0.3.35 imports with no LD_LIBRARY_PATH ($MODE profile)"
+    [ "$v" = "$VER" ] || { echo "FAIL: import probe got '$v', want $VER (from WHEEL_URL)"; exit 1; }
+    echo "self-check OK: llama_cpp $VER imports with no LD_LIBRARY_PATH ($MODE profile)"
 }
 
 if [ "$MODE" = cpu ]; then
