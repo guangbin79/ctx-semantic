@@ -55,9 +55,12 @@ esac
 
 WHEEL="models/wheels/$(basename "$WHEEL_URL")"
 VER=$(basename "$WHEEL_URL" | cut -d- -f2)
-# bump-contract gate: pyproject extras must pin the same version as WHEEL_URL
-grep -q "llama-cpp-python==$VER" pyproject.toml || {
-    echo "FAIL: pyproject pin != $VER — bump contract broken"; exit 1; }
+# bump-contract gate: BOTH pyproject extras must pin exactly WHEEL_URL's
+# version (quote-anchored so 0.3.3 cannot satisfy 0.3.35; counted so a
+# partial bump of only one extra fails).
+pins=$(grep -Ec "llama-cpp-python==$VER\"" pyproject.toml || true)
+[ "$pins" -ge 2 ] || {
+    echo "FAIL: pyproject extras pin != $VER — bump contract broken"; exit 1; }
 SDIST="models/wheels/llama_cpp_python-$VER.tar.gz"
 
 # Embedded import self-check. Runs after sync in both profiles. The cuda arm
