@@ -50,8 +50,9 @@ mkdir -p ~/ctx-semantic/models
 
 `uv-sync.sh` is the ONLY supported setup entry point. It must run BEFORE any
 bare `uv run` / `uv lock` on a fresh clone. No argument = cpu profile:
-`uv sync --extra cpu` (wheel resolved from abetlen's cpu index) + an embedded
-import probe — nothing else is touched. `--cuda` = the full cuda pipeline:
+`uv sync` (base+dev) + a sha256-verified fetch of the cpu wheel from the
+`CPU_WHEEL_*` pin (installed imperatively — the abetlen index serves no
+digests, so the lock cannot hash-pin it) + an embedded import probe. `--cuda` = the full cuda pipeline:
 materialize the cu124 wheel (16-way ranged fetch + sha256 verify) →
 `uv sync --extra cuda` → imperative wheel install (the lock records the path
 arm as a requires-dist mapping only, so the sync itself never installs it) →
@@ -63,7 +64,7 @@ marker fast path.
 
 | Asset | Location | How to obtain |
 |---|---|---|
-| cpu wheel (24 MB) | abetlen's cpu index (nothing materialized in-repo) | auto-installed by `uv sync --extra cpu`. Pin (source of truth: `CPU_WHEEL_*` constants in `scripts/uv-sync.sh`): `https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.35/llama_cpp_python-0.3.35-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl` · sha256 `d172f3d3c8cdd194c3c47c71cb077ed6e61354a2d0f939ceeac0c8fd29999596` · 23,912,624 bytes |
+| cpu wheel (24 MB) | `models/wheels/` (gitignored; verified fetch) | sha256-verified fetch + imperative install — `uv sync` covers base+dev only. Pin (source of truth: `CPU_WHEEL_*` constants in `scripts/uv-sync.sh`): `https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.35/llama_cpp_python-0.3.35-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl` · sha256 `d172f3d3c8cdd194c3c47c71cb077ed6e61354a2d0f939ceeac0c8fd29999596` · 23,912,624 bytes |
 | cu124 wheel (1.7 GB) | `<repo>/models/wheels/` | auto-fetched + sha256-verified by `uv-sync.sh --cuda` |
 | sdist tarball | `<repo>/models/wheels/` | auto-fetched + sha256-verified by `uv-sync.sh --cuda` |
 | GGUF model (639 MB) | `~/ctx-semantic/models/Qwen3-Embedding-0.6B-Q8_0.gguf` (exact filename — the loader opens it by name) | one-time fetch, both profiles, see snippet below. sha256 pinned in-repo: `06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439` |
@@ -202,6 +203,6 @@ On a llama-cpp-python bump, the pin source of truth is the constant blocks in
 together with the `==0.3.35` version pins in `pyproject.toml`
 `[project.optional-dependencies]`, the version-embedded path in
 `[tool.uv.sources]`, and `uv.lock` (`uv lock` after editing). The cpu
-constants document what the abetlen cpu index must serve (uv resolves that
-profile via the index); the cuda constants drive the ranged fetch + sha256
-verify exactly as before.
+constants drive the cpu wheel's verified fetch + install (the index serves
+no digests, so the pin is enforced by the script, not the lock); the cuda
+constants drive the ranged fetch + sha256 verify exactly as before.

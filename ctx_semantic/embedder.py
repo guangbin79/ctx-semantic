@@ -96,7 +96,7 @@ def _l2_normalized(mat: npt.NDArray[np.floating]) -> npt.NDArray[np.float32]:
 
 # nvidia wheels ship the CUDA runtime under site-packages; globs are anchored
 # at sys.prefix/lib and `**` tolerates the pythonX.Y/site-packages segment
-# (convention: tests/test_embedder.py nvidia-dir skip branch).
+# (exercised by tests/test_embedder.py::_make_nvidia_tree).
 _NVIDIA_WHEEL_LIBS: Final[dict[str, str]] = {
     "cudart": "lib/**/nvidia/cuda_runtime/lib/libcudart.so.12",
     "cublas": "lib/**/nvidia/cublas/lib/libcublas.so.12",

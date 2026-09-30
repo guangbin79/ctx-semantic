@@ -2,9 +2,11 @@
 # Dual-profile uv sync for llama-cpp-python (SHAPE=1: pyproject extras
 # cpu/cuda). No argument = CPU default profile; --cuda = opt-in CUDA profile.
 #
-# CPU default: `uv sync --extra cpu` pulls the ~24MB manylinux cpu wheel from
-# abetlen's cpu index — no CUDA libs, no cmake, imports with no
-# LD_LIBRARY_PATH (spike-cpu-wheel.out, cpu-wheel-verdict=OK). The sdist
+# CPU default: `uv sync` (base+dev) then the ~24MB manylinux cpu wheel
+# installed from a sha256-verified fetch of CPU_WHEEL_URL (the abetlen index
+# serves no digests, so uv.lock cannot hash-pin it — same verified-install
+# contract as the cuda arm). No CUDA libs, no cmake, no LD_LIBRARY_PATH
+# (spike-cpu-wheel.out, cpu-wheel-verdict=OK). The sdist
 # CMAKE fallback branch is consciously omitted: the SIGILL trigger below is
 # false for the cpu wheel. Reintroduce it only if a future cpu wheel SIGILLs
 # (CMAKE_ARGS="-DGGML_CUDA=off" uv pip install --no-binary llama-cpp-python).
@@ -90,7 +92,19 @@ print(llama_cpp.__version__)
 }
 
 if [ "$MODE" = cpu ]; then
-    uv sync --extra cpu
+    # Base+dev sync only: the abetlen index serves no digests (uv.lock holds
+    # no hash for this package), so the wheel comes from the verified pin
+    # below — same installer-of-record contract as the cuda arm.
+    uv sync
+    CPU_WHEEL="models/wheels/$(basename "$CPU_WHEEL_URL")"
+    if ! echo "$CPU_WHEEL_SHA256  $CPU_WHEEL" | sha256sum -c --status 2>/dev/null; then
+        mkdir -p models/wheels
+        curl -sfL "$CPU_WHEEL_URL" -o "$CPU_WHEEL" || {
+            echo "FAIL: cpu wheel fetch ($CPU_WHEEL_URL)"; exit 1; }
+    fi
+    echo "$CPU_WHEEL_SHA256  $CPU_WHEEL" | sha256sum -c || {
+        echo "FAIL: cpu wheel sha256 != CPU_WHEEL_SHA256 pin — supply-chain mismatch"; exit 1; }
+    uv pip install -q --python .venv/bin/python "$CPU_WHEEL"
     probe
     exit 0
 fi

@@ -142,5 +142,5 @@ def stale_status(db: Path, *, now: float | None = None) -> str | None:
     return (
         f"resolved DB not written for {age_days:.0f}d{sibling_note}."
         " If context-mode upgraded recently its DB naming/layout may have"
-        " changed — run `uv run python -m ctx_semantic.probe` for a verdict."
+        " changed — run `uv run --no-sync python -m ctx_semantic.probe` for a verdict."
     )

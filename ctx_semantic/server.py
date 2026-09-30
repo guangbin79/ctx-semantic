@@ -13,8 +13,10 @@ module never prints.
 
 project_path is the documented override of the cwd/$OPENCODE_PROJECT_DIR
 default; $CTX_SEMANTIC_DB still wins over everything (projhash contract).
-Run via ../run.sh (LD_LIBRARY_PATH for the nvidia CUDA libs) or:
-    uv run python -m ctx_semantic.server
+Run via ./run.sh (profile-aware: cpu default, CTX_SEMANTIC_PROFILE=cuda;
+no LD_LIBRARY_PATH — the embedder preloads the nvidia libs in-process).
+Direct: uv run --no-sync python -m ctx_semantic.server (--no-sync because a
+bare uv run's implicit exact sync strips the extras-only llama_cpp wheel).
 """
 
 from __future__ import annotations

@@ -28,9 +28,10 @@ cd ctx-semantic
 Plus the one manual asset (GGUF model) — full prerequisites, asset table,
 MCP registration, and troubleshooting: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
-Entry point: `./run.sh` (executes `python -m ctx_semantic.server` inside the
-uv environment with `--extra "${CTX_SEMANTIC_PROFILE:-cpu}"`; script-relative,
-works from any checkout).
+Entry point: `./run.sh` (executes `python -m ctx_semantic.server` in the uv
+environment, routed per profile — cpu syncs `--extra cpu`, cuda boots
+`--no-sync` behind a boot-time wheel preflight; script-relative, works from
+any checkout).
 
 ## Verification probes
 
@@ -67,7 +68,7 @@ start on it (preflight), and an mtime heuristic warns on stale DBs.
 Health check from anywhere:
 
 ```sh
-uv run --project ~/ctx-semantic python -m ctx_semantic.probe [--project DIR]
+uv run --project ~/ctx-semantic --no-sync python -m ctx_semantic.probe [--project DIR]
 ```
 
 Exit codes: `0` PASS/SKIP · `1` DRIFT (fix kit printed) · `2` STALE.

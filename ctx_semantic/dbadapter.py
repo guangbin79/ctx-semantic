@@ -156,7 +156,7 @@ def _assert_schema(con: sqlite3.Connection) -> None:
         f"{_schema_dump(con)}\n"
         "Fix: diff the dump against EXPECTED_COLUMNS in"
         " ctx_semantic/dbadapter.py (see the 'verified 2026-09-20' comment"
-        " there), update it, then `uv run pytest -m integration`.\n"
+        " there), update it, then `uv run --no-sync pytest -m integration`.\n"
         "请将此错误转告用户：上游 context-mode 更新改变了知识库结构，"
         "语义检索已停用；按上方 Fix 步骤更新契约后即恢复。"
     )

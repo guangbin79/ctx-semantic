@@ -19,8 +19,8 @@ cpu = [
 cuda = [
     "llama-cpp-python==0.3.35",
     # libggml-cuda.so dlopens libcudart + libcublas/libcublasLt from these
-    # wheels at runtime (ldd, spike-qwen3-llama-cpp phase 7; run.sh exports
-    # their lib dirs). Previously transitive via onnxruntime-gpu[cuda,cudnn];
+    # wheels at runtime (ldd, spike-qwen3-llama-cpp phase 7; the embedder
+    # preloads them in-process via ctypes RTLD_GLOBAL). Previously transitive via onnxruntime-gpu[cuda,cudnn];
     # now explicit. nvidia-cuda-nvrtc-cu12 arrives transitively with cublas.
     # Pinned to the 12.9 minor — the set the spike verified; uv.lock freezes
     # exact versions, but a floating minor would drift the tested runtime

@@ -5,7 +5,7 @@ while still feeding the MCP SDK's pipe — after the session, every captured
 line must parse as a JSON-RPC frame (stdio purity: stdout carries ONLY MCP
 protocol bytes; anything else corrupts the protocol stream).
 
-Prerequisite: `uv run python -m ctx_semantic.warmup --project $HOME` (or warm
+Prerequisite: `uv run --no-sync python -m ctx_semantic.warmup --project $HOME` (or warm
 the DB given here via ``--db`` — the spawned server receives it as
 CTX_SEMANTIC_DB) so first-query latency measures steady state (model load +
 incremental sync, not a full embed). Records startup / first-query /

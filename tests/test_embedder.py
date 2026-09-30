@@ -288,10 +288,10 @@ def embedder() -> Embedder:
     e = Embedder(cache_dir=CACHE_DIR)
     try:
         e.embed_query("warmup")  # lazy load once for the whole module
-    except Exception:  # noqa: BLE001 — availability probe: cu124 wheel needs
-        # nvidia LD_LIBRARY_PATH exports; without them import llama_cpp fails
-        # on BOTH cuda and cpu attempts, so real-model tests skip as a set.
-        pytest.skip("llama_cpp/model stack unavailable (no nvidia exports)")
+    except Exception:  # noqa: BLE001 — availability probe: the stack is
+        # genuinely broken (cuda install with unusable nvidia wheels, missing
+        # GGUF, or no llama_cpp at all), so real-model tests skip as a set.
+        pytest.skip("llama_cpp/model stack unavailable (broken install)")
     return e
 
 

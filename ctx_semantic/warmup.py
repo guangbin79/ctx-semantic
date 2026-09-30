@@ -1,7 +1,7 @@
 """Pre-embed missing chunks into the sidecar vector store (T7 warmup CLI).
 
 Usage:
-    uv run python -m ctx_semantic.warmup [--db PATH | --project DIR | --all | --prune]
+    uv run --no-sync python -m ctx_semantic.warmup [--db PATH | --project DIR | --all | --prune]
 
 --db embeds one explicit content DB; --project resolves a project directory
 through projhash (same chain as the server: $CTX_SEMANTIC_DB >
