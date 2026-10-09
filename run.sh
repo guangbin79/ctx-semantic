@@ -24,4 +24,4 @@ if [ "$PROFILE" = cuda ]; then
     }
     exec uv run --no-sync --project "$CTX_DIR" python -m ctx_semantic.server
 fi
-exec uv run --project "$CTX_DIR" --extra cpu python -m ctx_semantic.server
+exec uv run --no-sync --project "$CTX_DIR" --extra cpu python -m ctx_semantic.server
