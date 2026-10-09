@@ -37,13 +37,13 @@ any checkout).
 
 ```sh
 # FTS5 available in the venv
-uv run --extra cpu python -c "import sqlite3; con=sqlite3.connect(':memory:'); con.execute('CREATE VIRTUAL TABLE t USING fts5(x)')"
+uv run --no-sync --extra cpu python -c "import sqlite3; con=sqlite3.connect(':memory:'); con.execute('CREATE VIRTUAL TABLE t USING fts5(x)')"
 
 # llama-cpp-python pinned version — plain import, no loader-path setup
-uv run --extra cpu python -c "import llama_cpp; print(llama_cpp.__version__)"    # -> 0.3.35
+uv run --no-sync --extra cpu python -c "import llama_cpp; print(llama_cpp.__version__)"    # -> 0.3.35
 
 # embedding model loads and embeds on CPU
-uv run --extra cpu python -c "
+uv run --no-sync --extra cpu python -c "
 from ctx_semantic.embedder import Embedder, MODEL_NAME
 e = Embedder(); e.embed_query('probe')
 print(MODEL_NAME, e.device)
@@ -52,7 +52,7 @@ print(MODEL_NAME, e.device)
 # cuda profile (after ./scripts/uv-sync.sh --cuda): the embedder preloads the
 # nvidia-wheel libs in-process (ctypes RTLD_GLOBAL) before importing
 # llama_cpp, so the same probe needs no env prefix
-uv run --extra cuda python -c "
+uv run --no-sync --extra cuda python -c "
 from ctx_semantic.embedder import Embedder, MODEL_NAME
 e = Embedder(); e.embed_query('probe')
 print(MODEL_NAME, e.device)
@@ -91,7 +91,7 @@ Run it after every `ctx_upgrade`.
 ## Testing
 
 ```sh
-uv run --extra cpu pytest -q                # cpu profile (default install)
-uv run --extra cpu pytest --cov=ctx_semantic --cov-report=term-missing
+uv run --no-sync --extra cpu pytest -q                # cpu profile (default install)
+uv run --no-sync --extra cpu pytest --cov=ctx_semantic --cov-report=term-missing
 # cuda profile install: swap --extra cpu -> --extra cuda
 ```

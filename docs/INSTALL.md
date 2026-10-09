@@ -102,13 +102,13 @@ no such problem — no repair, no compiler.
 
 ```sh
 # FTS5 available in the venv
-uv run --extra cpu python -c "import sqlite3; con=sqlite3.connect(':memory:'); con.execute('CREATE VIRTUAL TABLE t USING fts5(x)')"
+uv run --no-sync --extra cpu python -c "import sqlite3; con=sqlite3.connect(':memory:'); con.execute('CREATE VIRTUAL TABLE t USING fts5(x)')"
 
 # llama-cpp-python pinned version — plain import, the cpu wheel has no CUDA deps
-uv run --extra cpu python -c "import llama_cpp; print(llama_cpp.__version__)"        # -> 0.3.35
+uv run --no-sync --extra cpu python -c "import llama_cpp; print(llama_cpp.__version__)"        # -> 0.3.35
 
 # model loads and embeds on CPU
-uv run --extra cpu python -c "
+uv run --no-sync --extra cpu python -c "
 from ctx_semantic.embedder import Embedder, MODEL_NAME
 e = Embedder(); e.embed_query('probe')
 print(MODEL_NAME, e.device)"                                              # -> ...-gguf-q8 cpu
@@ -120,12 +120,12 @@ in-process (ctypes `RTLD_GLOBAL`) first, so the same probes run with no env
 prefix:
 
 ```sh
-uv run --extra cuda python -c "
+uv run --no-sync --extra cuda python -c "
 from ctx_semantic.embedder import Embedder, MODEL_NAME
 e = Embedder(); e.embed_query('probe')
 print(MODEL_NAME, e.device)"                                              # -> ...-gguf-q8 cuda
 
-uv run --extra cuda pytest -q                                             # full suite, cuda assertions live
+uv run --no-sync --extra cuda pytest -q                                             # full suite, cuda assertions live
 ```
 
 (On a cuda install, a bare `import llama_cpp` with no ctx_semantic import
@@ -171,9 +171,9 @@ then pass the profile through the `environment` block — `run.sh` reads
 
 ```sh
 ./run.sh                                       # MCP stdio server (spawned by opencode); CTX_SEMANTIC_PROFILE=cuda ./run.sh for GPU
-uv run --extra cpu python -m ctx_semantic.warmup --all     # pre-embed every content DB (per-DB fault tolerant)
-uv run --extra cpu python -m ctx_semantic.warmup --prune   # drop dead-path rows + retired model keys
-uv run --extra cpu python -m ctx_semantic.harness          # recall gates; exit 2 = corpus churned, re-sample CASES
+uv run --no-sync --extra cpu python -m ctx_semantic.warmup --all     # pre-embed every content DB (per-DB fault tolerant)
+uv run --no-sync --extra cpu python -m ctx_semantic.warmup --prune   # drop dead-path rows + retired model keys
+uv run --no-sync --extra cpu python -m ctx_semantic.harness          # recall gates; exit 2 = corpus churned, re-sample CASES
 ```
 
 (`--extra cpu` matches the default install; on a cuda-profile install swap in
@@ -187,7 +187,7 @@ cuda arm boots with `--no-sync` and fails fast when the wheel is missing.)
 | Symptom | Cause / fix |
 |---|---|
 | `uv lock`/`uv run`: "path … does not exist" | cu124 wheel not materialized yet — run `scripts/uv-sync.sh --cuda` first (the cpu profile never needs it) |
-| First query on a cuda install fails loud with a dlopen traceback (`libcudart.so.12` / `libcublas*`) | the embedder's ctypes preload found the nvidia wheels missing/broken (e.g. a bare `uv sync` stripped them). Diagnose: `uv run --extra cuda python -c "from ctx_semantic.embedder import _find_nvidia_libs; print(_find_nvidia_libs())"` — any `None` value means that wheel lib is gone → re-run `scripts/uv-sync.sh --cuda`. Cannot happen on a cpu install: there the same failed preload only logs a warning and inference runs on CPU |
+| First query on a cuda install fails loud with a dlopen traceback (`libcudart.so.12` / `libcublas*`) | the embedder's ctypes preload found the nvidia wheels missing/broken (e.g. a bare `uv sync` stripped them). Diagnose: `uv run --no-sync --extra cuda python -c "from ctx_semantic.embedder import _find_nvidia_libs; print(_find_nvidia_libs())"` — any `None` value means that wheel lib is gone → re-run `scripts/uv-sync.sh --cuda`. Cannot happen on a cpu install: there the same failed preload only logs a warning and inference runs on CPU |
 | Server boots, then the FIRST query fails `ModuleNotFoundError: llama_cpp` (cuda profile) | the cuda wheel was stripped by a re-sync (bare `uv run`/`uv sync` or a different `--extra` on this venv). `run.sh`'s cuda arm now fails fast at boot on the missing wheel; older entrypoints surface it at first query (lazy import) — re-run `scripts/uv-sync.sh --cuda` |
 | "preload failed" warning in server logs on the cpu profile | expected, not an error — no nvidia wheels exist on that profile; inference is on CPU |
 | SIGILL in libggml-cpu | cuda profile: repair step was skipped/bypassed (bare `uv sync` relinks the wheel's stock lib) — re-run `scripts/uv-sync.sh --cuda` |
